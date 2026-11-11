@@ -160,22 +160,22 @@ export const GeneralConfigView: React.FC<GeneralConfigViewProps> = ({
         </div>
       </div>
 
-      {/* Google Cloud Run & Webhook Setup Quick Box */}
-      <div className="p-5 rounded-2xl bg-[#0c1424] border border-emerald-500/20 space-y-3">
+      {/* Vercel & Neon PostgreSQL Quick Box */}
+      <div className="p-5 rounded-2xl bg-[#0c1424] border border-teal-500/20 space-y-3">
         <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-emerald-400" />
+          <Terminal className="w-4 h-4 text-teal-400" />
           <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-            Publicación en Google Cloud Run y Webhook de Telegram
+            Despliegue en Vercel & Base de Datos Neon PostgreSQL
           </h3>
         </div>
         <p className="text-xs text-slate-300">
-          Esta aplicación se publica directamente desde Google AI Studio mediante el botón <strong>Publish</strong>. La URL generada de Google Cloud Run atiende la aplicación web y el webhook en <code>/api/telegram/webhook</code>.
+          Esta aplicación está adaptada para ejecutarse como Serverless en <strong>Vercel</strong> y conectarse a <strong>Neon PostgreSQL</strong> mediante la variable <code>DATABASE_URL</code>. El webhook de Telegram atiende en <code>/api/telegram/webhook</code> sin necesidad de procesos de fondo permanentes.
         </p>
         <p className="text-xs text-slate-400">
-          Comando para registrar el Webhook con Telegram una vez configurado tu token:
+          Comando para registrar el Webhook con Telegram una vez configurado tu dominio Vercel:
         </p>
         <div className="p-3 rounded-xl bg-[#070b14] border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto select-all">
-          curl -F &quot;url=https://TU-CLOUD-RUN-URL.run.app/api/telegram/webhook&quot; -F &quot;secret_token=TU_WEBHOOK_SECRET&quot; https://api.telegram.org/botTU_TELEGRAM_BOT_TOKEN/setWebhook
+          curl -F &quot;url=https://TU-PROYECTO.vercel.app/api/telegram/webhook&quot; -F &quot;secret_token=TU_WEBHOOK_SECRET&quot; https://api.telegram.org/botTU_TELEGRAM_BOT_TOKEN/setWebhook
         </div>
       </div>
 
@@ -183,7 +183,7 @@ export const GeneralConfigView: React.FC<GeneralConfigViewProps> = ({
       <div className="p-5 rounded-2xl bg-[#0c1424] border border-slate-800 space-y-4">
         <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
           <Cpu className="w-4 h-4 text-sky-400" />
-          Matriz de Estado de Servicios Google
+          Matriz de Estado de Servicios
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
@@ -193,7 +193,7 @@ export const GeneralConfigView: React.FC<GeneralConfigViewProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
               /api/telegram/webhook
             </div>
-            <p className="text-[10px] text-slate-400">Deduplicación & Idempotencia</p>
+            <p className="text-[10px] text-slate-400">Vercel Serverless Ready</p>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
@@ -207,11 +207,11 @@ export const GeneralConfigView: React.FC<GeneralConfigViewProps> = ({
 
           <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
             <span className="text-slate-400 block font-medium">Base de Datos</span>
-            <div className="flex items-center gap-1.5 font-bold text-emerald-400 font-mono text-xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              Cloud Firestore
+            <div className="flex items-center gap-1.5 font-bold text-teal-400 font-mono text-xs">
+              <span className="w-2 h-2 rounded-full bg-teal-400"></span>
+              Neon PostgreSQL
             </div>
-            <p className="text-[10px] text-slate-400">8 Colecciones Conectadas</p>
+            <p className="text-[10px] text-slate-400">10 Tablas SQL Migradas</p>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">

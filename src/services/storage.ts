@@ -22,7 +22,7 @@ import {
   INITIAL_USERS,
 } from './mockData';
 import { DEFAULT_KEYWORD_CONFIG } from './deterministicBotEngine';
-import { FirestoreService } from './firestoreService';
+import { DataService } from './dataService';
 
 const STORAGE_KEYS = {
   BOT_CONFIG: 'jc_mines_bot_config_v3',
@@ -94,14 +94,14 @@ export const StorageService = {
     getStoredItem(STORAGE_KEYS.BOT_CONFIG, INITIAL_BOT_CONFIG) || INITIAL_BOT_CONFIG,
   saveBotConfig: (config: BotConfig): void => {
     setStoredItem(STORAGE_KEYS.BOT_CONFIG, config);
-    FirestoreService.saveBotConfig(config).catch(console.warn);
+    DataService.saveBotConfig(config).catch(console.warn);
   },
 
   getKeywordConfig: (): DeterministicKeywordConfig =>
     getStoredItem(STORAGE_KEYS.KEYWORDS, DEFAULT_KEYWORD_CONFIG) || DEFAULT_KEYWORD_CONFIG,
   saveKeywordConfig: (config: DeterministicKeywordConfig): void => {
     setStoredItem(STORAGE_KEYS.KEYWORDS, config);
-    FirestoreService.saveConditions(config).catch(console.warn);
+    DataService.saveConditions(config).catch(console.warn);
   },
 
   getMessages: (): AutoMessage[] => {
@@ -110,7 +110,7 @@ export const StorageService = {
   },
   saveMessages: (messages: AutoMessage[]): void => {
     setStoredItem(STORAGE_KEYS.MESSAGES, messages);
-    FirestoreService.saveMessages(messages).catch(console.warn);
+    DataService.saveMessages(messages).catch(console.warn);
   },
 
   getMediaItems: (): MediaItem[] => {
@@ -119,7 +119,7 @@ export const StorageService = {
   },
   saveMediaItems: (items: MediaItem[]): void => {
     setStoredItem(STORAGE_KEYS.MEDIA_ITEMS, items);
-    FirestoreService.saveMedia(items).catch(console.warn);
+    DataService.saveMedia(items).catch(console.warn);
   },
 
   getTutorials: (): Tutorial[] => {
@@ -135,14 +135,13 @@ export const StorageService = {
   },
   saveUsers: (users: TelegramUser[]): void => {
     setStoredItem(STORAGE_KEYS.USERS, users);
-    users.forEach((u) => FirestoreService.saveUser(u).catch(console.warn));
+    users.forEach((u) => DataService.saveUser(u).catch(console.warn));
   },
 
   getConversations: (): Record<string, UserConversation> =>
     getStoredItem(STORAGE_KEYS.CONVERSATIONS, {}) || {},
   saveConversations: (conversations: Record<string, UserConversation>): void => {
     setStoredItem(STORAGE_KEYS.CONVERSATIONS, conversations);
-    FirestoreService.saveConversations(conversations).catch(console.warn);
   },
 
   getSupportTickets: (): SupportTicket[] => {
@@ -163,7 +162,7 @@ export const StorageService = {
     getStoredItem(STORAGE_KEYS.GENERAL_CONFIG, INITIAL_GENERAL_CONFIG) || INITIAL_GENERAL_CONFIG,
   saveGeneralConfig: (config: GeneralConfig): void => {
     setStoredItem(STORAGE_KEYS.GENERAL_CONFIG, config);
-    FirestoreService.saveGeneralConfig(config).catch(console.warn);
+    DataService.saveGeneralConfig(config).catch(console.warn);
   },
 
   resetAllToDemo: (): void => {

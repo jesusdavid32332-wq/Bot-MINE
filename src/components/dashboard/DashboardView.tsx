@@ -17,6 +17,7 @@ import {
   Play,
   Layers,
   Sparkles,
+  Database,
 } from 'lucide-react';
 import {
   DashboardIcon3D,
@@ -242,20 +243,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="p-5 rounded-2xl bg-[#070d1c] border border-[#14213d] flex items-start justify-between gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                <Flame className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400">
+                <Database className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">Google Cloud Firestore</h3>
-                <p className="text-xs font-mono text-slate-400">ai-studio-94df968f · Reglas Desplegadas</p>
+                <h3 className="text-sm font-semibold text-white">Neon PostgreSQL</h3>
+                <p className="text-xs font-mono text-teal-300">Serverless Driver · Compatible con Vercel</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-300">
-              Persistencia: <span className="text-emerald-400 font-semibold">Colecciones Reales Conectadas</span>
+              Persistencia: <span className="text-teal-400 font-semibold">Esquema SQL Migrado</span>
             </p>
             <p className="text-xs text-slate-400">
-              Colecciones activas: <code>users</code>, <code>messages</code>, <code>conversations</code>, <code>media</code>, <code>conditions</code>, <code>settings</code>, <code>processed_updates</code>.
+              Tablas activas: <code>users</code>, <code>messages</code>, <code>conversations</code>, <code>media_items</code>, <code>conditions</code>, <code>settings</code>, <code>processed_updates</code>.
             </p>
           </div>
 

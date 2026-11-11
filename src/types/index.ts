@@ -201,6 +201,8 @@ export interface BotConfig {
   webhookSecret: string;
   enforceAgeVerification18: boolean;
   responsibleGamingDisclaimer: string;
+  botToken?: string;
+  botTokenSource?: string;
   startBehavior?: string;
   enableInlineKeyboards?: boolean;
   newUserGreeting?: string;

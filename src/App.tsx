@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { AccountVerificationStatus, SectionId, TelegramUser } from './types';
 import { StorageService } from './services/storage';
-import { FirestoreService } from './services/firestoreService';
+import { DataService } from './services/dataService';
 
 // Layout Components
 import { Sidebar } from './components/layout/Sidebar';
@@ -47,58 +47,64 @@ export default function App() {
   const [trackedLinks, setTrackedLinks] = useState(StorageService.getTrackedLinks());
   const [generalConfig, setGeneralConfig] = useState(StorageService.getGeneralConfig());
 
-  // Connect Real-Time Subscriptions to Cloud Firestore
+  // Connect polling/sync with Neon PostgreSQL via DataService
   useEffect(() => {
-    // 1. Initialize Firestore collections if empty
-    FirestoreService.initializeDatabaseIfEmpty();
+    let isMounted = true;
 
-    // 2. Attach real-time listeners for live sync across bot and admin panel
-    const unsubUsers = FirestoreService.subscribeUsers((updatedUsers) => {
-      if (Array.isArray(updatedUsers)) setUsers(updatedUsers);
-    });
+    const fetchAllData = async () => {
+      try {
+        const [
+          remoteUsers,
+          remoteMessages,
+          remoteMedia,
+          remoteConditions,
+          remoteBotConfig,
+          remoteGeneralConfig,
+          remoteConvs,
+        ] = await Promise.allSettled([
+          DataService.getUsers(),
+          DataService.getMessages(),
+          DataService.getMedia(),
+          DataService.getConditions(),
+          DataService.getBotConfig(),
+          DataService.getGeneralConfig(),
+          DataService.getConversations(),
+        ]);
 
-    const unsubMessages = FirestoreService.subscribeMessages((updatedMessages) => {
-      if (Array.isArray(updatedMessages) && updatedMessages.length > 0) setMessages(updatedMessages);
-    });
+        if (!isMounted) return;
 
-    const unsubMedia = FirestoreService.subscribeMedia((updatedMedia) => {
-      if (Array.isArray(updatedMedia) && updatedMedia.length > 0) setMediaItems(updatedMedia);
-    });
-
-    const unsubConditions = FirestoreService.subscribeConditions((updatedConditions) => {
-      if (updatedConditions && typeof updatedConditions === 'object') {
-        setKeywordConfig((prev) => ({ ...prev, ...updatedConditions }));
+        if (remoteUsers.status === 'fulfilled' && remoteUsers.value.length > 0) {
+          setUsers(remoteUsers.value);
+        }
+        if (remoteMessages.status === 'fulfilled' && remoteMessages.value.length > 0) {
+          setMessages(remoteMessages.value);
+        }
+        if (remoteMedia.status === 'fulfilled' && remoteMedia.value.length > 0) {
+          setMediaItems(remoteMedia.value);
+        }
+        if (remoteConditions.status === 'fulfilled') {
+          setKeywordConfig((prev) => ({ ...prev, ...remoteConditions.value }));
+        }
+        if (remoteBotConfig.status === 'fulfilled') {
+          setBotConfig((prev) => ({ ...prev, ...remoteBotConfig.value }));
+        }
+        if (remoteGeneralConfig.status === 'fulfilled') {
+          setGeneralConfig((prev) => ({ ...prev, ...remoteGeneralConfig.value }));
+        }
+        if (remoteConvs.status === 'fulfilled' && Object.keys(remoteConvs.value).length > 0) {
+          setConversations(remoteConvs.value);
+        }
+      } catch (err) {
+        console.warn('[App] Error sincronizando con base de datos Neon:', err);
       }
-    });
+    };
 
-    const unsubBotConfig = FirestoreService.subscribeBotConfig((updatedConfig) => {
-      if (updatedConfig && typeof updatedConfig === 'object') {
-        setBotConfig((prev) => ({ ...prev, ...updatedConfig }));
-      }
-    });
-
-    const unsubGeneralConfig = FirestoreService.subscribeGeneralConfig((updatedGeneral) => {
-      if (updatedGeneral && typeof updatedGeneral === 'object') {
-        setGeneralConfig((prev) => ({ ...prev, ...updatedGeneral }));
-      }
-    });
-
-    const unsubConvs = FirestoreService.subscribeConversations((updatedConvs) => {
-      if (updatedConvs && typeof updatedConvs === 'object') setConversations(updatedConvs);
-    });
+    fetchAllData();
+    const interval = setInterval(fetchAllData, 15000);
 
     return () => {
-      try {
-        unsubUsers?.();
-        unsubMessages?.();
-        unsubMedia?.();
-        unsubConditions?.();
-        unsubBotConfig?.();
-        unsubGeneralConfig?.();
-        unsubConvs?.();
-      } catch (e) {
-        console.warn('Error limpiando suscripciones:', e);
-      }
+      isMounted = false;
+      clearInterval(interval);
     };
   }, []);
 
@@ -128,7 +134,7 @@ export default function App() {
     );
     setUsers(updated);
     StorageService.saveUsers(updated);
-    FirestoreService.updateUserStatus(telegramId, status, notes).catch(console.warn);
+    DataService.updateUserStatus(telegramId, status, notes).catch(console.warn);
   };
 
   // Select user and jump to conversation
