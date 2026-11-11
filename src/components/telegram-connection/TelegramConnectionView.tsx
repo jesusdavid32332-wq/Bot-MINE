@@ -54,21 +54,42 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
   // Disconnect confirmation modal state
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
 
+  // Helper: safely parse JSON responses without throwing pattern errors on HTML error pages
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        ...(options?.headers || {}),
+      },
+    });
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) {
+        throw new Error(`Servidor devolvió error HTTP ${res.status} (${res.statusText || 'Error de servicio'})`);
+      }
+      throw new Error(`Respuesta no procesable del servidor (esperado JSON, recibido texto)`);
+    }
+    return { res, data };
+  };
+
   // Load live connection status from backend
   const loadStatus = async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('/api/telegram/connection-status');
-      const data = await res.json();
-      if (data.success) {
+      const { data } = await safeFetchJson('/api/telegram/connection-status');
+      if (data && data.success) {
         setStatus(data);
       } else {
-        setErrorMessage(data.error || 'Error al obtener estado de Telegram');
+        setErrorMessage(data?.error || 'Error al obtener estado de Telegram');
       }
     } catch (err) {
       setErrorMessage(
-        'Error de red comunicándose con el servidor: ' +
+        'Error de comunicación con el servicio: ' +
           (err instanceof Error ? err.message : String(err))
       );
     } finally {
@@ -81,15 +102,49 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
   }, []);
 
   const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedCmd(id);
-    setTimeout(() => setCopiedCmd(null), 2200);
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedCmd(id);
+      setTimeout(() => setCopiedCmd(null), 2200);
+    } catch (e) {
+      console.warn('Clipboard write prevented:', e);
+    }
   };
 
   // Submit token to backend for real Telegram API verification
   const handleConnect = async (forceOverwrite = false) => {
-    if (!tokenInput.trim()) {
+    const rawInput = tokenInput.trim();
+    if (!rawInput) {
       setErrorMessage('Por favor introduce el token del bot provisto por @BotFather.');
+      return;
+    }
+
+    // Clean token: strip quotes, spaces, and optional 'bot' prefix
+    const cleanToken = rawInput
+      .replace(/^bot/i, '')
+      .replace(/["'<>]/g, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .trim();
+
+    if (!cleanToken.includes(':')) {
+      setErrorMessage(
+        'El token ingresado no contiene los dos puntos separadores ":". El formato oficial de @BotFather es [ID_NUMERICO]:[HASH_SECRETO] (ejemplo: 7981234567:AAFl0...).'
+      );
+      return;
+    }
+
+    const [botIdPart, secretPart] = cleanToken.split(':');
+    if (!/^\d+$/.test(botIdPart)) {
+      setErrorMessage(
+        `La primera parte del token debe ser numérico (ID de Telegram). Se recibió: "${botIdPart}". Copia el token completo desde @BotFather.`
+      );
+      return;
+    }
+
+    if (!secretPart || secretPart.length < 15) {
+      setErrorMessage(
+        'La clave secreta del token es demasiado corta. Asegúrate de haber copiado el token completo emitido por @BotFather.'
+      );
       return;
     }
 
@@ -98,20 +153,18 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
     setSuccessNotice(null);
 
     try {
-      const res = await fetch('/api/telegram/connect', {
+      const { res, data } = await safeFetchJson('/api/telegram/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: tokenInput.trim(),
+          token: cleanToken,
           overwriteWebhook: forceOverwrite,
-          adminAuthKey: adminAuthInput.trim(),
+          adminAuthKey: (adminAuthInput || adminTelegramId || '').trim(),
         }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setErrorMessage(data.error || 'Fallo de autenticación o validación de token');
+      if (!res.ok || !data.success) {
+        setErrorMessage(data?.error || `Fallo de validación del token (HTTP ${res.status})`);
         setIsSubmitting(false);
         return;
       }
@@ -128,19 +181,15 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
         return;
       }
 
-      if (data.success) {
-        setTokenInput(''); // Clear plain token from memory immediately per security requirements
-        setSuccessNotice(
-          data.connected
-            ? `¡Bot @${data.bot?.username} verificado y conectado exitosamente con Webhook activo!`
-            : `Token validado para @${data.bot?.username}. ${data.webhookNotice || ''}`
-        );
-        setShowOverwriteModal(false);
-        setPendingOverwriteInfo(null);
-        await loadStatus();
-      } else {
-        setErrorMessage(data.error || 'Error durante la vinculación');
-      }
+      setTokenInput(''); // Clear plain token from memory immediately per security requirements
+      setSuccessNotice(
+        data.connected
+          ? `¡Bot @${data.bot?.username} verificado y conectado exitosamente con Webhook activo!`
+          : `Token validado para @${data.bot?.username}. ${data.webhookNotice || ''}`
+      );
+      setShowOverwriteModal(false);
+      setPendingOverwriteInfo(null);
+      await loadStatus();
     } catch (err) {
       setErrorMessage(
         'Error enviando solicitud de conexión: ' +
@@ -158,17 +207,16 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
     setSuccessNotice(null);
 
     try {
-      const res = await fetch('/api/telegram/disconnect', {
+      const { res, data } = await safeFetchJson('/api/telegram/disconnect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
-      const data = await res.json();
-      if (data.success) {
+      if (res.ok && data?.success) {
         setSuccessNotice('Bot de Telegram desconectado y webhook eliminado correctamente.');
         setShowDisconnectModal(false);
         await loadStatus();
       } else {
-        setErrorMessage(data.error || 'Error al desconectar');
+        setErrorMessage(data?.error || 'Error al desconectar');
       }
     } catch (err) {
       setErrorMessage('Error al desconectar: ' + (err instanceof Error ? err.message : String(err)));
@@ -184,17 +232,16 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
     setSuccessNotice(null);
 
     try {
-      const res = await fetch('/api/telegram/set-webhook', {
+      const { res, data } = await safeFetchJson('/api/telegram/set-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
-      if (data.success) {
+      if (res.ok && data?.success) {
         setSuccessNotice(data.message || 'Webhook sincronizado exitosamente.');
         await loadStatus();
       } else {
-        setErrorMessage(data.error || 'Error al sincronizar webhook');
+        setErrorMessage(data?.error || 'Error al sincronizar webhook');
       }
     } catch (err) {
       setErrorMessage('Error al sincronizar webhook: ' + (err instanceof Error ? err.message : String(err)));

@@ -62,8 +62,30 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 }
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-);
+try {
+  const rootElement = document.getElementById('root');
+  if (rootElement) {
+    createRoot(rootElement).render(
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
+  } else {
+    console.error('No se encontró el elemento #root en el DOM');
+  }
+} catch (bootErr) {
+  console.error('[Error Crítico de Montaje]', bootErr);
+  const rootElement = document.getElementById('root');
+  if (rootElement) {
+    rootElement.innerHTML = `
+      <div style="min-height: 100vh; background: #030712; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; padding: 20px; text-align: center;">
+        <div style="font-size: 32px; margin-bottom: 12px;">💎</div>
+        <h1 style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">Juan Carlos | Mines AI — Recuperación de Arranque</h1>
+        <p style="font-size: 13px; color: #94a3b8; max-width: 400px; margin-bottom: 16px;">Ocurrió un error cargando el módulo principal. Pulsa para reiniciar el panel.</p>
+        <button onclick="localStorage.clear(); window.location.reload();" style="background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 10px; font-weight: bold; cursor: pointer;">
+          Reiniciar Panel
+        </button>
+      </div>
+    `;
+  }
+}

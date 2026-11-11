@@ -15,6 +15,7 @@ import {
   Upload,
   Sparkles,
   RotateCcw,
+  X,
 } from 'lucide-react';
 
 interface TelegramAdminMenuViewProps {

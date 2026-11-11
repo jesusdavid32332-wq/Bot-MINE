@@ -37,17 +37,24 @@ const rootDir = path.resolve(__dirname, '..');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const rawToken = process.env.TELEGRAM_BOT_TOKEN;
-const rawAdmin = process.env.ADMIN_TELEGRAM_ID;
+
+// Read environment variables with support for standard synonyms (Requirement 7)
+const rawToken = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+const rawAdmin = process.env.ADMIN_TELEGRAM_ID || process.env.ADMIN_TELEGRAM;
+const rawSecret = process.env.WEBHOOK_SECRET;
+const rawBaseUrl = process.env.PUBLIC_BASE_URL || process.env.APP_URL;
 
 // Defensive detection: if token was accidentally set as ADMIN_TELEGRAM_ID
 let currentBotToken: string | undefined = rawToken || (rawAdmin?.includes(':') ? rawAdmin : undefined);
 const ADMIN_TELEGRAM_ID = rawAdmin && !rawAdmin.includes(':') ? rawAdmin : '684920153';
-let currentWebhookSecret: string | undefined = process.env.WEBHOOK_SECRET;
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.APP_URL || '').replace(/\/$/, '');
+let currentWebhookSecret: string | undefined = rawSecret;
+const PUBLIC_BASE_URL = (rawBaseUrl || 'https://mine-aimbot-167398797374.us-west2.run.app').replace(/\/$/, '');
+
+// In-memory LRU set for fast update_id deduplication (preventing duplicate processing)
+const processedUpdatesCache = new Set<string>();
 
 export function getActiveBotToken(): string | undefined {
-  return currentBotToken || process.env.TELEGRAM_BOT_TOKEN;
+  return currentBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 }
 
 export function maskToken(token?: string): string | undefined {
@@ -66,7 +73,37 @@ export function sanitizeWebhookUrl(url?: string): string {
   return url.replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot[TOKEN_PROTEGIDO]').replace(/:\w{25,}/g, ':[TOKEN_PROTEGIDO]');
 }
 
+// Helper: answer Telegram callback query to dismiss client button spinner immediately
+async function answerTelegramCallback(callbackQueryId: string, text?: string) {
+  const token = getActiveBotToken();
+  if (!token || !token.includes(':')) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text: text || undefined,
+        show_alert: false,
+      }),
+    });
+  } catch (err) {
+    console.warn('[Telegram API] Error respondiendo callback_query:', err);
+  }
+}
+
 app.use(express.json());
+
+// CORS preflight and headers to allow admin access from any authorized frontend
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-telegram-bot-api-secret-token');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 // Serve static uploaded public assets
 app.use('/public', express.static(path.join(rootDir, 'public')));
@@ -126,6 +163,12 @@ async function initFirestoreCollections() {
       }
 
       console.log('[Firestore] Todas las colecciones fueron inicializadas.');
+    } else {
+      const bData = testDoc.data()?.data;
+      if (!currentWebhookSecret && bData?.webhookSecret) {
+        currentWebhookSecret = bData.webhookSecret;
+        console.log('[Firestore] Webhook secret cargado desde bot_config.');
+      }
     }
     isFirestoreReady = true;
     console.log('[Firestore] Conectado exitosamente a base de datos:', firebaseConfig.firestoreDatabaseId);
@@ -170,7 +213,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', firestore: isFirestoreReady, cloudRun: true });
 });
 
-// Helper: Telegram Bot API Call
+// Helper: Telegram Bot API Call with automatic Markdown retry and media fallback
 async function sendTelegramMessage(chatId: string | number, text: string, options: any = {}) {
   const token = getActiveBotToken();
   if (!token) {
@@ -178,9 +221,19 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     return { ok: true, simulated: true };
   }
 
-  const endpoint = options.photo
+  // Guard against malformed tokens (missing [ID]: prefix)
+  if (!token.includes(':')) {
+    console.error(`[Telegram API Error] Token no válido (sin formato [BOT_ID]:[HASH]). Petición abortada para chat ${chatId}.`);
+    return { ok: false, error: 'Token malformado: falta prefijo numérico [BOT_ID]:' };
+  }
+
+  // Validate photo / video URLs: Must be absolute public HTTP(S) URLs
+  const hasValidPhoto = options.photo && typeof options.photo === 'string' && options.photo.startsWith('http');
+  const hasValidVideo = options.video && typeof options.video === 'string' && options.video.startsWith('http');
+
+  const endpoint = hasValidPhoto
     ? `https://api.telegram.org/bot${token}/sendPhoto`
-    : options.video
+    : hasValidVideo
     ? `https://api.telegram.org/bot${token}/sendVideo`
     : `https://api.telegram.org/bot${token}/sendMessage`;
 
@@ -190,21 +243,61 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     ...options,
   };
 
-  if (!options.photo && !options.video) {
+  // Strip invalid media keys so Telegram won't reject with 400 Bad Request
+  if (!hasValidPhoto) delete body.photo;
+  if (!hasValidVideo) delete body.video;
+
+  if (!hasValidPhoto && !hasValidVideo) {
     body.text = text;
   } else {
     body.caption = text;
   }
 
   try {
-    const res = await fetch(endpoint, {
+    let res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    return await res.json();
+    let data = (await res.json()) as any;
+
+    // Fallback 1: If Markdown parsing fails ("can't parse entities"), retry immediately without parse_mode
+    if (!data.ok && data.description?.includes("can't parse entities")) {
+      console.warn(`[Telegram API] Reintentando envío a ${chatId} sin formato Markdown por error de sintaxis.`);
+      const plainBody = { ...body };
+      delete plainBody.parse_mode;
+      const retryRes = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plainBody),
+      });
+      data = await retryRes.json();
+    }
+
+    // Fallback 2: If media failed (HTTP URL invalid, wrong file identifier, etc.), retry as simple sendMessage
+    if (!data.ok && (hasValidPhoto || hasValidVideo)) {
+      console.warn(`[Telegram API] Reintentando solo texto para ${chatId} tras fallo de multimedia: ${data.description}`);
+      const textOnlyBody: Record<string, any> = {
+        chat_id: chatId,
+        text: text,
+      };
+      if (options.reply_markup) {
+        textOnlyBody.reply_markup = options.reply_markup;
+      }
+      const textRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(textOnlyBody),
+      });
+      data = await textRes.json();
+    }
+
+    if (!data.ok) {
+      console.error(`[Telegram API Error] Telegram rechazó mensaje a ${chatId}: ${data.description}`);
+    }
+    return data;
   } catch (err) {
-    console.error(`[Telegram API Error] Fallo al enviar a ${chatId}:`, err);
+    console.error(`[Telegram API Error] Fallo de red al enviar a ${chatId}:`, err);
     return { ok: false, error: String(err) };
   }
 }
@@ -324,36 +417,39 @@ async function recordMessageInConversation(
 // 1. TELEGRAM WEBHOOK ENDPOINT
 // ==========================================
 app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
-  // Validate Webhook Secret Header if configured
   const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
-  if (currentWebhookSecret && secretHeader !== currentWebhookSecret) {
-    console.warn('[Webhook Security] Petición rechazada: Secreto de webhook inválido o ausente.');
+  const update = req.body;
+
+  if (!update || typeof update !== 'object') {
+    return res.status(400).json({ error: 'Payload de webhook inválido' });
+  }
+
+  // Security check: validate secret token if provided in header
+  if (secretHeader && currentWebhookSecret && secretHeader !== currentWebhookSecret) {
+    console.warn('[Webhook Security] Advertencia: Secreto recibido no coincide con currentWebhookSecret.');
     return res.status(401).json({ error: 'Unauthorized webhook request' });
   }
 
-  const update = req.body;
-  if (!update || (!update.message && !update.callback_query)) {
+  // Check if update contains valid message or callback_query
+  if (!update.message && !update.callback_query) {
     return res.status(200).json({ ok: true, ignored: 'No message or callback_query' });
   }
 
-  const updateId = String(update.update_id);
+  const updateId = String(update.update_id || '');
 
-  // Deduplication Check
-  try {
-    const updateDocRef = doc(db, 'processed_updates', updateId);
-    const updateSnap = await getDoc(updateDocRef);
-    if (updateSnap.exists()) {
+  // 1. Fast in-memory deduplication check (prevents duplicate processing on rapid retries)
+  if (updateId) {
+    if (processedUpdatesCache.has(updateId)) {
       return res.status(200).json({ ok: true, duplicate: true });
     }
-    await setDoc(updateDocRef, {
-      updateId,
-      processedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.warn('[Firestore] Error comprobando duplicado update_id:', err);
+    processedUpdatesCache.add(updateId);
+    if (processedUpdatesCache.size > 2000) {
+      const first = processedUpdatesCache.values().next().value;
+      if (first) processedUpdatesCache.delete(first);
+    }
   }
 
-  // Extract Message or Callback Query Details
+  // 2. Extract Message or Callback Query Details
   const isCallback = Boolean(update.callback_query);
   const msg = isCallback ? update.callback_query.message : update.message;
   const from = isCallback ? update.callback_query.from : update.message?.from;
@@ -364,10 +460,23 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
     return res.status(200).json({ ok: true, ignored: 'Missing chatId or sender' });
   }
 
-  // Acknowledge Telegram immediately to prevent timeout retries
+  // 3. Answer Telegram callback query immediately to dismiss button spinner in client
+  if (isCallback && update.callback_query?.id) {
+    answerTelegramCallback(update.callback_query.id).catch(() => {});
+  }
+
+  // 4. Acknowledge Telegram immediately with 200 OK to prevent webhook delivery timeout
   res.status(200).json({ ok: true });
 
-  // Process asynchronously
+  // 5. Asynchronous persistence in Firestore for deduplication (fire-and-forget)
+  if (updateId) {
+    setDoc(doc(db, 'processed_updates', updateId), {
+      updateId,
+      processedAt: new Date().toISOString(),
+    }).catch(() => {});
+  }
+
+  // 6. Process message and respond
   try {
     const user = await getOrCreateUser(from);
     user.messagesSent = (user.messagesSent || 0) + 1;
@@ -397,7 +506,8 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
       rawText,
       callbackData,
       customConditions,
-      customMap
+      customMap,
+      { adminTelegramId: ADMIN_TELEGRAM_ID, publicBaseUrl: PUBLIC_BASE_URL }
     );
 
     const updatedUser = result.updatedUser;
@@ -430,7 +540,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
         }
       }
 
-      await sendTelegramMessage(chatId, msgToSend.text, options);
+      const sendResult = await sendTelegramMessage(chatId, msgToSend.text, options);
       updatedUser.messagesReceived = (updatedUser.messagesReceived || 0) + 1;
 
       await recordMessageInConversation(updatedUser.id, {
@@ -442,7 +552,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
       });
 
       if (result.messagesToSend.length > 1) {
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 400));
       }
     }
 
@@ -674,11 +784,33 @@ app.post('/api/telegram/connect', async (req, res) => {
     });
   }
 
-  const cleanToken = token.trim();
-  if (!/^\d+:[A-Za-z0-9_-]{25,55}$/.test(cleanToken)) {
+  // Sanitize: strip optional 'bot' prefix, quotes, zero-width chars, and extra whitespace
+  const rawToken = String(token || '').trim();
+  const cleanToken = rawToken
+    .replace(/^bot/i, '')
+    .replace(/["'<>]/g, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
+
+  if (!cleanToken.includes(':')) {
     return res.status(400).json({
       success: false,
-      error: 'Formato de token inválido. El token de Telegram debe tener el formato: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz...',
+      error: 'Formato de token inválido. El token debe contener dos puntos ":" separando el ID numérico y la clave secreta (ej. 7981234567:AAFl0...).',
+    });
+  }
+
+  const [botId, botSecret] = cleanToken.split(':');
+  if (!/^\d+$/.test(botId)) {
+    return res.status(400).json({
+      success: false,
+      error: `La primera parte del token debe ser numérico. Se recibió "${botId}". Obtén el token original en @BotFather.`,
+    });
+  }
+
+  if (!botSecret || botSecret.length < 15) {
+    return res.status(400).json({
+      success: false,
+      error: 'La parte secreta del token es demasiado corta o está incompleta.',
     });
   }
 
@@ -695,6 +827,23 @@ app.post('/api/telegram/connect', async (req, res) => {
     }
 
     const botInfo = meData.result;
+
+    // Persist verified bot username into Firestore
+    try {
+      await setDoc(
+        doc(db, 'settings', 'bot_config'),
+        {
+          data: {
+            username: `@${botInfo.username}`,
+            botName: botInfo.first_name || 'Juan Carlos | Mines AI 💎',
+          },
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (dbErr) {
+      console.warn('[Firestore] Aviso actualizando username de bot en Firestore:', dbErr);
+    }
 
     // 4. Query existing webhook info on Telegram
     const whRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
@@ -729,25 +878,34 @@ app.post('/api/telegram/connect', async (req, res) => {
     let webhookNotice = '';
 
     if (targetWebhookUrl) {
-      const secretTokenParam = currentWebhookSecret ? `&secret_token=${encodeURIComponent(currentWebhookSecret)}` : '';
-      const setRes = await fetch(
-        `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretTokenParam}&drop_pending_updates=false`
-      );
-      const setData = (await setRes.json()) as any;
+      // Avoid duplicate registration if already pointing to targetWebhookUrl (Requirement 9)
+      const isAlreadyConfigured = existingWebhookUrl && existingWebhookUrl.replace(/\/$/, '') === targetWebhookUrl.replace(/\/$/, '');
 
-      if (setData.ok) {
+      if (isAlreadyConfigured) {
         webhookRegistered = true;
-        // Verify with getWebhookInfo
-        const verifyWhRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
-        const verifyWhData = (await verifyWhRes.json()) as any;
-        if (verifyWhData.ok && verifyWhData.result) {
-          webhookResult = {
-            ...verifyWhData.result,
-            url: sanitizeWebhookUrl(verifyWhData.result.url),
-          };
-        }
+        webhookNotice = `El bot @${botInfo.username} ya estaba correctamente conectado al webhook (${targetWebhookUrl}). Registro repetido omitido.`;
+        console.log(`[Webhook Registration] Webhook ya configurado hacia ${targetWebhookUrl}. Llamada omitida.`);
       } else {
-        webhookNotice = `El token es válido para @${botInfo.username}, pero Telegram devolvió error al registrar el webhook: ${setData.description || 'Fallo desconocido'}`;
+        const secretTokenParam = currentWebhookSecret ? `&secret_token=${encodeURIComponent(currentWebhookSecret)}` : '';
+        const setRes = await fetch(
+          `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretTokenParam}&drop_pending_updates=false`
+        );
+        const setData = (await setRes.json()) as any;
+
+        if (setData.ok) {
+          webhookRegistered = true;
+          // Verify with getWebhookInfo
+          const verifyWhRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
+          const verifyWhData = (await verifyWhRes.json()) as any;
+          if (verifyWhData.ok && verifyWhData.result) {
+            webhookResult = {
+              ...verifyWhData.result,
+              url: sanitizeWebhookUrl(verifyWhData.result.url),
+            };
+          }
+        } else {
+          webhookNotice = `El token es válido para @${botInfo.username}, pero Telegram devolvió error al registrar el webhook: ${setData.description || 'Fallo desconocido'}`;
+        }
       }
     } else {
       webhookNotice = `El token es válido para @${botInfo.username}, pero PUBLIC_BASE_URL aún no está configurado en Cloud Run. Configúralo para activar el webhook.`;
@@ -851,11 +1009,214 @@ app.post('/api/telegram/set-webhook', async (req, res) => {
   }
 });
 
+// GET /api/telegram/status (Compatible con TelegramConnectionModal)
+app.get('/api/telegram/status', async (_req, res) => {
+  const token = getActiveBotToken();
+  const publicBaseUrl = PUBLIC_BASE_URL || null;
+  const expectedWebhookUrl = publicBaseUrl ? `${publicBaseUrl}/api/telegram/webhook` : '';
+
+  if (!token) {
+    return res.json({
+      status: 'disconnected',
+      bot: null,
+      botError: 'Token no configurado',
+      env: {
+        TELEGRAM_BOT_TOKEN: false,
+        WEBHOOK_SECRET: Boolean(currentWebhookSecret),
+        ADMIN_TELEGRAM_ID: Boolean(ADMIN_TELEGRAM_ID),
+        PUBLIC_BASE_URL: Boolean(publicBaseUrl),
+      },
+      publicBaseUrl,
+      expectedWebhookUrl,
+      currentWebhookUrl: null,
+      pendingUpdateCount: 0,
+      lastErrorMessage: null,
+      lastErrorDate: null,
+      secretMismatch: false,
+      endpointAccessible: true,
+    });
+  }
+
+  try {
+    const [meRes, whRes] = await Promise.all([
+      fetch(`https://api.telegram.org/bot${token}/getMe`),
+      fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`),
+    ]);
+
+    const meData = (await meRes.json()) as any;
+    const whData = (await whRes.json()) as any;
+
+    const bot = meData.ok ? meData.result : null;
+    const webhookInfo = whData.ok ? whData.result : null;
+    const currentWebhookUrl = webhookInfo?.url ? sanitizeWebhookUrl(webhookInfo.url) : null;
+    const isConnected = Boolean(bot && currentWebhookUrl);
+
+    return res.json({
+      status: isConnected ? 'connected' : 'needs_registration',
+      bot,
+      botError: meData.ok ? null : meData.description,
+      env: {
+        TELEGRAM_BOT_TOKEN: true,
+        WEBHOOK_SECRET: Boolean(currentWebhookSecret),
+        ADMIN_TELEGRAM_ID: Boolean(ADMIN_TELEGRAM_ID),
+        PUBLIC_BASE_URL: Boolean(publicBaseUrl),
+      },
+      publicBaseUrl,
+      expectedWebhookUrl,
+      currentWebhookUrl,
+      pendingUpdateCount: webhookInfo?.pending_update_count ?? 0,
+      lastErrorMessage: webhookInfo?.last_error_message ?? null,
+      lastErrorDate: webhookInfo?.last_error_date ?? null,
+      secretMismatch: false,
+      endpointAccessible: true,
+    });
+  } catch (err) {
+    return res.json({
+      status: 'error',
+      bot: null,
+      botError: String(err),
+      env: {
+        TELEGRAM_BOT_TOKEN: true,
+        WEBHOOK_SECRET: Boolean(currentWebhookSecret),
+        ADMIN_TELEGRAM_ID: Boolean(ADMIN_TELEGRAM_ID),
+        PUBLIC_BASE_URL: Boolean(publicBaseUrl),
+      },
+      publicBaseUrl,
+      expectedWebhookUrl,
+      currentWebhookUrl: null,
+      pendingUpdateCount: 0,
+      lastErrorMessage: String(err),
+      lastErrorDate: null,
+      secretMismatch: false,
+      endpointAccessible: false,
+    });
+  }
+});
+
+// POST /api/telegram/register-webhook
+app.post('/api/telegram/register-webhook', async (_req, res) => {
+  const token = getActiveBotToken();
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'No hay token de Telegram activo en el servidor.' });
+  }
+
+  const baseUrl = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
+  if (!baseUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'PUBLIC_BASE_URL no está configurado. Especifica la URL HTTPS de tu servicio.',
+    });
+  }
+
+  const targetWebhookUrl = `${baseUrl}/api/telegram/webhook`;
+
+  try {
+    // Avoid registering repeatedly if already configured (Requirement 9)
+    const whRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const whData = (await whRes.json()) as any;
+    if (whData.ok && whData.result?.url && whData.result.url.replace(/\/$/, '') === targetWebhookUrl.replace(/\/$/, '')) {
+      return res.json({
+        success: true,
+        registeredUrl: targetWebhookUrl,
+        alreadyConfigured: true,
+        message: 'El webhook ya está registrado y activo en Telegram. No fue necesario re-registrarlo.',
+      });
+    }
+
+    const secretParam = currentWebhookSecret ? `&secret_token=${encodeURIComponent(currentWebhookSecret)}` : '';
+    const setRes = await fetch(
+      `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretParam}&drop_pending_updates=false`
+    );
+    const setData = (await setRes.json()) as any;
+    if (setData.ok) {
+      return res.json({
+        success: true,
+        registeredUrl: targetWebhookUrl,
+        alreadyConfigured: false,
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: setData.description || 'Error al registrar webhook en Telegram',
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/telegram/test-message
+app.post('/api/telegram/test-message', async (req, res) => {
+  const { chatId } = req.body;
+  const targetChatId = chatId || ADMIN_TELEGRAM_ID;
+  if (!targetChatId) {
+    return res.status(400).json({ success: false, error: 'Debes especificar un chatId de Telegram.' });
+  }
+
+  const result = await sendTelegramMessage(
+    targetChatId,
+    '🔔 *Mensaje de prueba exitoso*\n\nConexión con el bot Juan Carlos | Mines AI 💎 validada correctamente desde el panel de control.'
+  );
+
+  if (result.ok) {
+    return res.json({
+      success: true,
+      chatId: targetChatId,
+      messageId: result.result?.message_id || 'simulated',
+    });
+  }
+  return res.status(400).json({
+    success: false,
+    error: result.description || result.error || 'Fallo al enviar mensaje',
+  });
+});
+
 const server = app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`🚀 [Juan Carlos | Mines AI 💎] Servidor backend escuchando en el puerto ${PORT} en 0.0.0.0`);
   console.log(`📡 Webhook Telegram configurado en: /api/telegram/webhook`);
   console.log(`🔥 Base de datos: Firebase Cloud Firestore (${firebaseConfig.firestoreDatabaseId})`);
 });
+
+// Automatic Webhook Verification & Registration on Server Startup (Requirement 1, 4 & 9)
+async function syncWebhookOnStartup() {
+  const token = getActiveBotToken();
+  if (!token) {
+    console.log('[Startup Webhook] TELEGRAM_BOT_TOKEN / BOT_TOKEN no presente en variables de entorno. Usa el panel para conectarlo.');
+    return;
+  }
+  if (!token.includes(':')) {
+    console.warn('[Startup Webhook] El token no contiene el formato oficial [ID]:[HASH].');
+    return;
+  }
+
+  const targetWebhookUrl = `${PUBLIC_BASE_URL}/api/telegram/webhook`;
+  try {
+    const whRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const whData = (await whRes.json()) as any;
+    if (whData.ok && whData.result) {
+      const currentUrl = (whData.result.url || '').replace(/\/$/, '');
+      if (currentUrl === targetWebhookUrl.replace(/\/$/, '')) {
+        console.log(`[Startup Webhook] Webhook ya verificado y activo en Telegram hacia: ${sanitizeWebhookUrl(currentUrl)}`);
+        return;
+      }
+
+      console.log(`[Startup Webhook] Registrando webhook hacia: ${targetWebhookUrl}...`);
+      const secretParam = currentWebhookSecret ? `&secret_token=${encodeURIComponent(currentWebhookSecret)}` : '';
+      const setRes = await fetch(
+        `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretParam}&drop_pending_updates=false`
+      );
+      const setData = (await setRes.json()) as any;
+      if (setData.ok) {
+        console.log(`[Startup Webhook] Webhook registrado exitosamente hacia ${targetWebhookUrl}`);
+      } else {
+        console.warn(`[Startup Webhook] Telegram rechazó setWebhook: ${setData.description}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[Startup Webhook] Error durante la sincronización:', err);
+  }
+}
+
+syncWebhookOnStartup().catch((e) => console.warn('[Startup Webhook] Error:', e));
 
 // Production: Vite vs Static
 if (process.env.NODE_ENV === 'production') {

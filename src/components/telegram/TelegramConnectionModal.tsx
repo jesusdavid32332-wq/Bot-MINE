@@ -58,12 +58,29 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
   const [testChatId, setTestChatId] = useState(adminTelegramId);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        ...(options?.headers || {}),
+      },
+    });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Error en respuesta del servidor (HTTP ${res.status}): ${text.slice(0, 150) || res.statusText}`);
+    }
+    return { res, json };
+  };
+
   const fetchStatus = async () => {
     setIsLoading(true);
     setFeedback(null);
     try {
-      const res = await fetch('/api/telegram/status');
-      const json = await res.json();
+      const { json } = await safeFetchJson('/api/telegram/status');
       setData(json);
     } catch (err: any) {
       setFeedback({ type: 'error', message: `Error comprobando estado: ${err.message}` });
@@ -84,9 +101,8 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
     setIsRegistering(true);
     setFeedback(null);
     try {
-      const res = await fetch('/api/telegram/register-webhook', { method: 'POST' });
-      const json = await res.json();
-      if (json.success) {
+      const { json } = await safeFetchJson('/api/telegram/register-webhook', { method: 'POST' });
+      if (json?.success) {
         setFeedback({
           type: 'success',
           message: `¡Webhook registrado con éxito en Telegram! URL: ${json.registeredUrl}`,
@@ -95,7 +111,7 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
       } else {
         setFeedback({
           type: 'error',
-          message: json.error || 'Error al registrar el webhook en Telegram.',
+          message: json?.error || 'Error al registrar el webhook en Telegram.',
         });
       }
     } catch (err: any) {
@@ -109,13 +125,12 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
     setIsSendingTest(true);
     setFeedback(null);
     try {
-      const res = await fetch('/api/telegram/test-message', {
+      const { json } = await safeFetchJson('/api/telegram/test-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatId: testChatId }),
       });
-      const json = await res.json();
-      if (json.success) {
+      if (json?.success) {
         setFeedback({
           type: 'success',
           message: `Mensaje de prueba enviado exitosamente a Chat ID ${json.chatId} (Message ID: ${json.messageId}).`,
@@ -123,7 +138,7 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
       } else {
         setFeedback({
           type: 'error',
-          message: json.error || 'Error enviando mensaje de prueba.',
+          message: json?.error || 'Error enviando mensaje de prueba.',
         });
       }
     } catch (err: any) {

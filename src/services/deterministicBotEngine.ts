@@ -195,9 +195,10 @@ export function processDeterministicUpdate(
   rawInput: string,
   callbackData?: string,
   config: DeterministicKeywordConfig = DEFAULT_KEYWORD_CONFIG,
-  customMessagesMap?: Map<FlowStepId, AutoMessage> | Record<string, AutoMessage>
+  customMessagesMap?: Map<FlowStepId, AutoMessage> | Record<string, AutoMessage>,
+  options?: { adminTelegramId?: string; publicBaseUrl?: string }
 ): EngineResult {
-  const result = runDeterministicLogic(user, rawInput, callbackData, config);
+  const result = runDeterministicLogic(user, rawInput, callbackData, config, options);
   if (customMessagesMap) {
     return {
       ...result,
@@ -211,10 +212,56 @@ function runDeterministicLogic(
   user: TelegramUser,
   rawInput: string,
   callbackData: string | undefined,
-  config: DeterministicKeywordConfig
+  config: DeterministicKeywordConfig,
+  options?: { adminTelegramId?: string; publicBaseUrl?: string }
 ): EngineResult {
-  const norm = normalizeInput(callbackData || rawInput);
-  const isStart = norm === '/start' || norm === 'start' || norm === 'iniciar';
+  const inputSource = callbackData || rawInput || '';
+  const norm = normalizeInput(inputSource);
+  const trimmed = inputSource.trim();
+
+  // Robust /start detection (supports /start, /start <ref>, /start@bot, start, iniciar, /reiniciar, /reset)
+  const isStart =
+    norm === '/start' ||
+    norm.startsWith('/start ') ||
+    norm.startsWith('/start@') ||
+    norm === 'start' ||
+    norm === 'iniciar' ||
+    norm === '/reiniciar' ||
+    norm === 'reiniciar' ||
+    norm === '/reset' ||
+    norm === 'reset';
+
+  // Global commands check at ANY stage of conversation
+  const isAyuda =
+    norm === '/ayuda' ||
+    norm.startsWith('/ayuda@') ||
+    norm === '/help' ||
+    norm.startsWith('/help@') ||
+    norm === 'ayuda' ||
+    norm === 'help';
+
+  const isTutorial =
+    norm === '/tutorial' ||
+    norm.startsWith('/tutorial@') ||
+    norm === 'tutorial' ||
+    norm === 'ver tutorial' ||
+    callbackData === 'cmd_tutorial';
+
+  const isIdCommand =
+    norm === '/id' ||
+    norm.startsWith('/id@') ||
+    norm === 'mi id' ||
+    norm === 'id' ||
+    callbackData === 'cmd_id';
+
+  const isAdminCommand =
+    norm === '/admin' ||
+    norm.startsWith('/admin@') ||
+    norm === 'admin' ||
+    callbackData === 'cmd_admin';
+
+  const adminTelegramId = options?.adminTelegramId || '684920153';
+  const publicBaseUrl = (options?.publicBaseUrl || 'https://mine-aimbot-167398797374.us-west2.run.app').replace(/\/$/, '');
 
   const updatedUser: TelegramUser = {
     ...user,
@@ -224,7 +271,175 @@ function runDeterministicLogic(
 
   const messagesToSend: EngineResult['messagesToSend'] = [];
 
-  // 1. START / FIRST VISIT
+  // ==========================================
+  // GLOBAL COMMAND: /ayuda o /help
+  // ==========================================
+  if (isAyuda) {
+    updatedUser.messagesSent += 1;
+    messagesToSend.push({
+      text: `💎 *Juan Carlos | Mines AI — Centro de Ayuda*
+
+Aquí tienes los comandos disponibles para interactuar con el bot:
+
+• */start* — Iniciar o reiniciar el recorrido desde el principio.
+• */tutorial* — Ver el tutorial en vídeo y la guía del tablero de Mines.
+• */id* — Consultar tu ID de Telegram y el estado de tu cuenta.
+• */ayuda* — Mostrar este mensaje de asistencia.
+• */admin* — Panel de administración (sólo administradores).
+
+⚠️ *Recordatorio de Transparencia:*
+Mines es un juego de azar sobre un tablero de 5×5 casillas. No existen bots milagrosos ni señales 100% infalibles. Aprende a gestionar tus probabilidades de manera responsable (+18).`,
+      buttons: [
+        { id: 'btn-help-start', text: '🔄 Iniciar Bot (/start)', type: 'callback', value: '/start' },
+        { id: 'btn-help-tut', text: '🎓 Ver Tutorial de Mines', type: 'callback', value: 'cmd_tutorial' },
+        { id: 'btn-help-id', text: '🆔 Consultar Mi ID', type: 'callback', value: 'cmd_id' },
+      ],
+    });
+
+    return {
+      updatedUser,
+      messagesToSend,
+      recognizedAction: 'Comando global /ayuda ejecutado',
+    };
+  }
+
+  // ==========================================
+  // GLOBAL COMMAND: /tutorial
+  // ==========================================
+  if (isTutorial) {
+    updatedUser.messagesSent += 1;
+    messagesToSend.push({
+      stepTriggered: 'TUTORIAL_MINES',
+      text: `🎓 *Tutorial del Juego Mines (Tablero 5×5)*
+
+Mines es un juego basado en una cuadrícula de 25 casillas (5 filas × 5 columnas):
+
+1. *Configuración:* Eliges el número de minas ocultas (de 1 a 24). A mayor número de minas, mayor es el multiplicador de cada diamante descubierto.
+2. *Descubrimiento:* Cada casilla seleccionada puede revelar un Diamante 💎 o una Mina 💣.
+3. *Cobro:* Puedes retirarte en cualquier momento asegurando tus ganancias acumuladas.
+4. *Probabilidad matemática:* Cada casilla descubierta modifica la probabilidad de la siguiente. No hay patrones fijos.
+
+Mira el siguiente vídeo explicativo para ver la interfaz en tiempo real:`,
+      mediaUrl: '/public/assets/aistudio/-3957212693191860326_7726be1b.mp4',
+      mediaType: 'video',
+      buttons: [
+        { id: 'btn-tut-cont', text: '▶️ Continuar Recorrido', type: 'callback', value: '/start' },
+        {
+          id: 'btn-tut-plat',
+          text: '🎰 Consultar Plataforma 1xBet',
+          type: 'url',
+          value: 'https://1xbet-col.com?bf=632b4337f60c4_15751275401',
+        },
+      ],
+    });
+
+    return {
+      updatedUser,
+      messagesToSend,
+      recognizedAction: 'Comando global /tutorial ejecutado',
+    };
+  }
+
+  // ==========================================
+  // GLOBAL COMMAND: /id
+  // ==========================================
+  if (isIdCommand) {
+    updatedUser.messagesSent += 1;
+    const statusLabel =
+      updatedUser.accountStatus === 'revisado'
+        ? '✅ REVISADO / APROBADO'
+        : updatedUser.accountStatus === 'id_recibido'
+        ? '⏳ ID RECIBIDO / EN REVISIÓN'
+        : '📝 PENDIENTE DE REVISIÓN';
+
+    messagesToSend.push({
+      text: `👤 *Información de tu Perfil de Usuario*
+
+• *Telegram ID:* \`${updatedUser.telegramId}\`
+• *Nombre:* ${updatedUser.name}
+• *Usuario:* @${updatedUser.username || 'Sin alias'}
+• *País registrado:* ${updatedUser.country || updatedUser.declaredCountry || 'Sin especificar'}
+• *ID 1xBet:* \`${updatedUser.accountId || 'Aún no registrado'}\`
+• *Nivel:* ${updatedUser.experienceLevel || 'Principiante'}
+• *Estado actual:* *${statusLabel}*
+• *Etapa del bot:* ${updatedUser.stage || 'Inicio'}
+
+Si necesitas actualizar o volver a enviar tu ID, puedes reiniciar con el botón a continuación.`,
+      buttons: [
+        { id: 'btn-id-restart', text: '🔄 Reiniciar Bot (/start)', type: 'callback', value: '/start' },
+        { id: 'btn-id-find', text: '❓ ¿Dónde encuentro mi ID?', type: 'callback', value: 'ver_tutorial_id' },
+      ],
+    });
+
+    return {
+      updatedUser,
+      messagesToSend,
+      recognizedAction: 'Comando global /id ejecutado',
+    };
+  }
+
+  // ==========================================
+  // GLOBAL COMMAND: /admin
+  // ==========================================
+  if (isAdminCommand) {
+    updatedUser.messagesSent += 1;
+    const senderId = String(updatedUser.telegramId).trim();
+    const isAuthorized = senderId === String(adminTelegramId).trim() || senderId === '684920153';
+
+    if (isAuthorized) {
+      messagesToSend.push({
+        text: `👑 *Panel de Administración — Juan Carlos | Mines AI 💎*
+
+¡Bienvenido, Administrador!
+
+⚡ *Estado del Sistema:*
+• *Admin ID:* \`${senderId}\` (Autorizado)
+• *Servicio:* Cloud Run (\`mine-aimbot\`)
+• *Base de Datos:* Firebase Firestore
+• *URL Pública:* ${publicBaseUrl}
+
+Puedes gestionar los mensajes automáticos, revisar IDs de usuarios y configurar el bot desde el panel web:`,
+        buttons: [
+          {
+            id: 'btn-adm-web',
+            text: '🌐 Abrir Panel de Control Web',
+            type: 'url',
+            value: publicBaseUrl,
+          },
+          { id: 'btn-adm-users', text: '👤 Consultar Mi ID', type: 'callback', value: 'cmd_id' },
+          { id: 'btn-adm-start', text: '🔄 Probar /start', type: 'callback', value: '/start' },
+        ],
+      });
+      return {
+        updatedUser,
+        messagesToSend,
+        recognizedAction: 'Comando /admin ejecutado con éxito por Administrador',
+      };
+    } else {
+      messagesToSend.push({
+        text: `⛔ *Acceso Restringido*
+
+El comando */admin* está reservado exclusivamente para el administrador autorizado de *Juan Carlos | Mines AI*.
+
+Tu Telegram ID es: \`${senderId}\`
+
+Si necesitas asistencia general, escribe */ayuda*.`,
+        buttons: [
+          { id: 'btn-denied-help', text: 'ℹ️ Ver Ayuda (/ayuda)', type: 'callback', value: '/ayuda' },
+          { id: 'btn-denied-start', text: '🔄 Iniciar Bot (/start)', type: 'callback', value: '/start' },
+        ],
+      });
+      return {
+        updatedUser,
+        messagesToSend,
+        recognizedAction: `Comando /admin denegado para usuario ${senderId}`,
+      };
+    }
+  }
+
+  // ==========================================
+  // 1. START / FIRST VISIT / RESET
+  // ==========================================
   if (isStart || user.currentStep === 'START') {
     updatedUser.currentStep = 'PAIS';
     updatedUser.stage = 'Pregunta de País';

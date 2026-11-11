@@ -54,41 +54,51 @@ export default function App() {
 
     // 2. Attach real-time listeners for live sync across bot and admin panel
     const unsubUsers = FirestoreService.subscribeUsers((updatedUsers) => {
-      setUsers(updatedUsers);
+      if (Array.isArray(updatedUsers)) setUsers(updatedUsers);
     });
 
     const unsubMessages = FirestoreService.subscribeMessages((updatedMessages) => {
-      setMessages(updatedMessages);
+      if (Array.isArray(updatedMessages) && updatedMessages.length > 0) setMessages(updatedMessages);
     });
 
     const unsubMedia = FirestoreService.subscribeMedia((updatedMedia) => {
-      setMediaItems(updatedMedia);
+      if (Array.isArray(updatedMedia) && updatedMedia.length > 0) setMediaItems(updatedMedia);
     });
 
     const unsubConditions = FirestoreService.subscribeConditions((updatedConditions) => {
-      setKeywordConfig(updatedConditions);
+      if (updatedConditions && typeof updatedConditions === 'object') {
+        setKeywordConfig((prev) => ({ ...prev, ...updatedConditions }));
+      }
     });
 
     const unsubBotConfig = FirestoreService.subscribeBotConfig((updatedConfig) => {
-      setBotConfig(updatedConfig);
+      if (updatedConfig && typeof updatedConfig === 'object') {
+        setBotConfig((prev) => ({ ...prev, ...updatedConfig }));
+      }
     });
 
     const unsubGeneralConfig = FirestoreService.subscribeGeneralConfig((updatedGeneral) => {
-      setGeneralConfig(updatedGeneral);
+      if (updatedGeneral && typeof updatedGeneral === 'object') {
+        setGeneralConfig((prev) => ({ ...prev, ...updatedGeneral }));
+      }
     });
 
     const unsubConvs = FirestoreService.subscribeConversations((updatedConvs) => {
-      setConversations(updatedConvs);
+      if (updatedConvs && typeof updatedConvs === 'object') setConversations(updatedConvs);
     });
 
     return () => {
-      unsubUsers();
-      unsubMessages();
-      unsubMedia();
-      unsubConditions();
-      unsubBotConfig();
-      unsubGeneralConfig();
-      unsubConvs();
+      try {
+        unsubUsers?.();
+        unsubMessages?.();
+        unsubMedia?.();
+        unsubConditions?.();
+        unsubBotConfig?.();
+        unsubGeneralConfig?.();
+        unsubConvs?.();
+      } catch (e) {
+        console.warn('Error limpiando suscripciones:', e);
+      }
     };
   }, []);
 

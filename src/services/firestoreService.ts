@@ -82,20 +82,31 @@ export const FirestoreService = {
 
   // USERS
   subscribeUsers(callback: (users: TelegramUser[]) => void): () => void {
-    return onSnapshot(
-      collection(db, 'users'),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const users = snapshot.docs.map((d) => d.data() as TelegramUser);
-          callback(users);
-        } else {
+    try {
+      return onSnapshot(
+        collection(db, 'users'),
+        (snapshot) => {
+          try {
+            if (!snapshot.empty) {
+              const users = snapshot.docs.map((d) => d.data() as TelegramUser);
+              callback(users);
+            } else {
+              callback([]);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando usuarios de snapshot:', e);
+            callback([]);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de usuarios:', error);
           callback([]);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de usuarios:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir usuarios:', err);
+      return () => {};
+    }
   },
 
   async saveUser(user: TelegramUser): Promise<void> {
@@ -118,22 +129,33 @@ export const FirestoreService = {
 
   // MESSAGES
   subscribeMessages(callback: (messages: AutoMessage[]) => void): () => void {
-    return onSnapshot(
-      collection(db, 'messages'),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const msgs = snapshot.docs
-            .map((d) => d.data() as AutoMessage)
-            .sort((a, b) => a.order - b.order);
-          callback(msgs);
-        } else {
+    try {
+      return onSnapshot(
+        collection(db, 'messages'),
+        (snapshot) => {
+          try {
+            if (!snapshot.empty) {
+              const msgs = snapshot.docs
+                .map((d) => d.data() as AutoMessage)
+                .sort((a, b) => a.order - b.order);
+              callback(msgs);
+            } else {
+              callback(INITIAL_MESSAGES);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando mensajes de snapshot:', e);
+            callback(INITIAL_MESSAGES);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de mensajes:', error);
           callback(INITIAL_MESSAGES);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de mensajes:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir mensajes:', err);
+      return () => {};
+    }
   },
 
   async saveMessages(messages: AutoMessage[]): Promise<void> {
@@ -148,20 +170,31 @@ export const FirestoreService = {
 
   // MEDIA
   subscribeMedia(callback: (media: MediaItem[]) => void): () => void {
-    return onSnapshot(
-      collection(db, 'media'),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const items = snapshot.docs.map((d) => d.data() as MediaItem);
-          callback(items);
-        } else {
+    try {
+      return onSnapshot(
+        collection(db, 'media'),
+        (snapshot) => {
+          try {
+            if (!snapshot.empty) {
+              const items = snapshot.docs.map((d) => d.data() as MediaItem);
+              callback(items);
+            } else {
+              callback(INITIAL_MEDIA_ITEMS);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando multimedia de snapshot:', e);
+            callback(INITIAL_MEDIA_ITEMS);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de multimedia:', error);
           callback(INITIAL_MEDIA_ITEMS);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de multimedia:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir multimedia:', err);
+      return () => {};
+    }
   },
 
   async saveMedia(items: MediaItem[]): Promise<void> {
@@ -176,19 +209,30 @@ export const FirestoreService = {
 
   // CONDITIONS (Keywords)
   subscribeConditions(callback: (config: DeterministicKeywordConfig) => void): () => void {
-    return onSnapshot(
-      doc(db, 'conditions', 'default'),
-      (docSnap) => {
-        if (docSnap.exists()) {
-          callback(docSnap.data() as DeterministicKeywordConfig);
-        } else {
+    try {
+      return onSnapshot(
+        doc(db, 'conditions', 'default'),
+        (docSnap) => {
+          try {
+            if (docSnap.exists()) {
+              callback(docSnap.data() as DeterministicKeywordConfig);
+            } else {
+              callback(DEFAULT_KEYWORD_CONFIG);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando condiciones de snapshot:', e);
+            callback(DEFAULT_KEYWORD_CONFIG);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de condiciones:', error);
           callback(DEFAULT_KEYWORD_CONFIG);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de condiciones:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir condiciones:', err);
+      return () => {};
+    }
   },
 
   async saveConditions(config: DeterministicKeywordConfig): Promise<void> {
@@ -205,20 +249,31 @@ export const FirestoreService = {
 
   // SETTINGS (bot_config, general_config)
   subscribeBotConfig(callback: (config: BotConfig) => void): () => void {
-    return onSnapshot(
-      doc(db, 'settings', 'bot_config'),
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          callback(d.data || d);
-        } else {
+    try {
+      return onSnapshot(
+        doc(db, 'settings', 'bot_config'),
+        (docSnap) => {
+          try {
+            if (docSnap.exists()) {
+              const d = docSnap.data();
+              callback(d?.data || d || INITIAL_BOT_CONFIG);
+            } else {
+              callback(INITIAL_BOT_CONFIG);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando bot_config:', e);
+            callback(INITIAL_BOT_CONFIG);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de bot_config:', error);
           callback(INITIAL_BOT_CONFIG);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de bot_config:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir bot_config:', err);
+      return () => {};
+    }
   },
 
   async saveBotConfig(config: BotConfig): Promise<void> {
@@ -234,20 +289,31 @@ export const FirestoreService = {
   },
 
   subscribeGeneralConfig(callback: (config: GeneralConfig) => void): () => void {
-    return onSnapshot(
-      doc(db, 'settings', 'general_config'),
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          callback(d.data || d);
-        } else {
+    try {
+      return onSnapshot(
+        doc(db, 'settings', 'general_config'),
+        (docSnap) => {
+          try {
+            if (docSnap.exists()) {
+              const d = docSnap.data();
+              callback(d?.data || d || INITIAL_GENERAL_CONFIG);
+            } else {
+              callback(INITIAL_GENERAL_CONFIG);
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando general_config:', e);
+            callback(INITIAL_GENERAL_CONFIG);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de general_config:', error);
           callback(INITIAL_GENERAL_CONFIG);
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de general_config:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir general_config:', err);
+      return () => {};
+    }
   },
 
   async saveGeneralConfig(config: GeneralConfig): Promise<void> {
@@ -264,23 +330,34 @@ export const FirestoreService = {
 
   // CONVERSATIONS
   subscribeConversations(callback: (convs: Record<string, UserConversation>) => void): () => void {
-    return onSnapshot(
-      collection(db, 'conversations'),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const res: Record<string, UserConversation> = {};
-          snapshot.docs.forEach((d) => {
-            res[d.id] = d.data() as UserConversation;
-          });
-          callback(res);
-        } else {
+    try {
+      return onSnapshot(
+        collection(db, 'conversations'),
+        (snapshot) => {
+          try {
+            if (!snapshot.empty) {
+              const res: Record<string, UserConversation> = {};
+              snapshot.docs.forEach((d) => {
+                res[d.id] = d.data() as UserConversation;
+              });
+              callback(res);
+            } else {
+              callback({});
+            }
+          } catch (e) {
+            console.warn('[Firestore] Error procesando conversaciones de snapshot:', e);
+            callback({});
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Error en snapshot de conversaciones:', error);
           callback({});
         }
-      },
-      (error) => {
-        console.warn('[Firestore] Error en snapshot de conversaciones:', error);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn('[Firestore] Fallo al suscribir conversaciones:', err);
+      return () => {};
+    }
   },
 
   async saveConversations(conversations: Record<string, UserConversation>): Promise<void> {
