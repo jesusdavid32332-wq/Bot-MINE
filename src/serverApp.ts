@@ -41,9 +41,30 @@ const rawToken = process.env.TELEGRAM_BOT_TOKEN;
 const rawAdmin = process.env.ADMIN_TELEGRAM_ID;
 
 // Defensive detection: if token was accidentally set as ADMIN_TELEGRAM_ID
-const TELEGRAM_BOT_TOKEN = rawToken || (rawAdmin?.includes(':') ? rawAdmin : undefined);
+let currentBotToken: string | undefined = rawToken || (rawAdmin?.includes(':') ? rawAdmin : undefined);
 const ADMIN_TELEGRAM_ID = rawAdmin && !rawAdmin.includes(':') ? rawAdmin : '684920153';
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+let currentWebhookSecret: string | undefined = process.env.WEBHOOK_SECRET;
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.APP_URL || '').replace(/\/$/, '');
+
+export function getActiveBotToken(): string | undefined {
+  return currentBotToken || process.env.TELEGRAM_BOT_TOKEN;
+}
+
+export function maskToken(token?: string): string | undefined {
+  if (!token || token.length < 10) return undefined;
+  const parts = token.split(':');
+  if (parts.length === 2) {
+    const prefix = parts[0];
+    const secret = parts[1];
+    return `${prefix}:${secret.slice(0, 3)}...${secret.slice(-3)}`;
+  }
+  return `${token.slice(0, 4)}...${token.slice(-4)}`;
+}
+
+export function sanitizeWebhookUrl(url?: string): string {
+  if (!url) return '';
+  return url.replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot[TOKEN_PROTEGIDO]').replace(/:\w{25,}/g, ':[TOKEN_PROTEGIDO]');
+}
 
 app.use(express.json());
 
@@ -129,11 +150,18 @@ app.get('/health', (_req: Request, res: Response) => {
     database: 'firebase-cloud-firestore',
     firestoreDatabaseId: firebaseConfig.firestoreDatabaseId,
     timestamp: new Date().toISOString(),
+    environment: {
+      TELEGRAM_BOT_TOKEN: Boolean(getActiveBotToken()),
+      WEBHOOK_SECRET: Boolean(currentWebhookSecret),
+      ADMIN_TELEGRAM_ID: Boolean(process.env.ADMIN_TELEGRAM_ID),
+      PUBLIC_BASE_URL: Boolean(process.env.PUBLIC_BASE_URL || process.env.APP_URL),
+    },
     telegram: {
       webhookEndpoint: '/api/telegram/webhook',
-      botConfigured: Boolean(TELEGRAM_BOT_TOKEN),
-      webhookSecretConfigured: Boolean(WEBHOOK_SECRET),
-      adminConfigured: Boolean(ADMIN_TELEGRAM_ID),
+      botConfigured: Boolean(getActiveBotToken()),
+      webhookSecretConfigured: Boolean(currentWebhookSecret),
+      adminConfigured: Boolean(process.env.ADMIN_TELEGRAM_ID),
+      publicBaseUrlConfigured: Boolean(PUBLIC_BASE_URL),
     },
   });
 });
@@ -144,16 +172,17 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 // Helper: Telegram Bot API Call
 async function sendTelegramMessage(chatId: string | number, text: string, options: any = {}) {
-  if (!TELEGRAM_BOT_TOKEN) {
+  const token = getActiveBotToken();
+  if (!token) {
     console.log(`[Telegram Simulation] -> Chat ${chatId}: ${text.slice(0, 80)}...`);
     return { ok: true, simulated: true };
   }
 
   const endpoint = options.photo
-    ? `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`
+    ? `https://api.telegram.org/bot${token}/sendPhoto`
     : options.video
-    ? `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo`
-    : `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    ? `https://api.telegram.org/bot${token}/sendVideo`
+    : `https://api.telegram.org/bot${token}/sendMessage`;
 
   const body: Record<string, any> = {
     chat_id: chatId,
@@ -297,7 +326,7 @@ async function recordMessageInConversation(
 app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
   // Validate Webhook Secret Header if configured
   const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
-  if (WEBHOOK_SECRET && secretHeader !== WEBHOOK_SECRET) {
+  if (currentWebhookSecret && secretHeader !== currentWebhookSecret) {
     console.warn('[Webhook Security] Petición rechazada: Secreto de webhook inválido o ausente.');
     return res.status(401).json({ error: 'Unauthorized webhook request' });
   }
@@ -392,7 +421,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
       if (msgToSend.mediaUrl) {
         const fullMediaUrl = msgToSend.mediaUrl.startsWith('http')
           ? msgToSend.mediaUrl
-          : `${process.env.APP_URL || ''}${msgToSend.mediaUrl}`;
+          : `${PUBLIC_BASE_URL}${msgToSend.mediaUrl}`;
 
         if (msgToSend.mediaType === 'video') {
           options.video = fullMediaUrl;
@@ -474,8 +503,356 @@ app.post('/api/users/:telegramId/review', async (req, res) => {
   }
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`🚀 [Juan Carlos | Mines AI 💎] Servidor backend escuchando en el puerto ${PORT}`);
+// Helper: Inspect real GCP credentials & permissions for Secret Manager and Cloud Run
+async function checkGcpSecretManagerAndCloudRun(): Promise<{
+  hasSecretManagerPermission: boolean;
+  hasCloudRunPermission: boolean;
+  errorMessage?: string;
+  requiredRoles: string[];
+  gcloudCommands: string[];
+}> {
+  const projectId = 'jumping-agility-75wls';
+  const region = 'us-west2';
+  const serviceName = 'mine-aimbot';
+
+  const result = {
+    hasSecretManagerPermission: false,
+    hasCloudRunPermission: false,
+    errorMessage: '',
+    requiredRoles: [
+      'roles/secretmanager.secretAccessor (acceso de lectura a secretos en Cloud Run)',
+      'roles/secretmanager.admin (creación y actualización de secretos)',
+      'roles/run.admin o roles/run.developer (modificación de la configuración del servicio Cloud Run)',
+    ],
+    gcloudCommands: [
+      `gcloud secrets create TELEGRAM_BOT_TOKEN --data-file=- --project=${projectId}`,
+      `PROJECT_NUM=$(gcloud projects describe ${projectId} --format='value(projectNumber)')`,
+      `gcloud projects add-iam-policy-binding ${projectId} --member="serviceAccount:\${PROJECT_NUM}-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"`,
+      `gcloud run services update ${serviceName} --region=${region} --project=${projectId} --set-secrets=TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest`,
+    ],
+  };
+
+  try {
+    const metaRes = await fetch('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', {
+      headers: { 'Metadata-Flavor': 'Google' },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!metaRes.ok) {
+      result.errorMessage = 'No se detectaron credenciales de cuenta de servicio de Google Cloud en el entorno.';
+      return result;
+    }
+    const tokenData = (await metaRes.json()) as { access_token?: string };
+    if (!tokenData.access_token) {
+      result.errorMessage = 'No se obtuvo access_token desde el servidor de metadatos de GCP.';
+      return result;
+    }
+
+    const smRes = await fetch(`https://secretmanager.googleapis.com/v1/projects/${projectId}/secrets`, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (smRes.ok) {
+      result.hasSecretManagerPermission = true;
+    } else {
+      const smErr = (await smRes.json().catch(() => ({}))) as any;
+      result.errorMessage = smErr.error?.message || `Secret Manager devolvió HTTP ${smRes.status} (PERMISSION_DENIED)`;
+    }
+
+    const crRes = await fetch(`https://${region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/${projectId}/services/${serviceName}`, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (crRes.ok) {
+      result.hasCloudRunPermission = true;
+    }
+  } catch (err) {
+    result.errorMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  return result;
+}
+
+// ----------------------------------------------------
+// 3. TELEGRAM BOT REAL CONNECTION & LIFECYCLE ENDPOINTS
+// ----------------------------------------------------
+
+// GET /api/telegram/connection-status
+app.get('/api/telegram/connection-status', async (_req, res) => {
+  const token = getActiveBotToken();
+  const publicBaseUrl = PUBLIC_BASE_URL;
+  const expectedWebhookUrl = publicBaseUrl ? `${publicBaseUrl}/api/telegram/webhook` : null;
+
+  const gcpPermissions = await checkGcpSecretManagerAndCloudRun();
+
+  if (!token) {
+    return res.json({
+      success: true,
+      connected: false,
+      hasToken: false,
+      maskedToken: undefined,
+      bot: null,
+      webhook: null,
+      expectedWebhookUrl,
+      webhookMatches: false,
+      publicBaseUrl,
+      publicBaseUrlConfigured: Boolean(publicBaseUrl),
+      webhookSecretConfigured: Boolean(currentWebhookSecret),
+      cloudRunConfig: {
+        serviceName: 'mine-aimbot',
+        region: 'us-west2',
+        projectId: 'jumping-agility-75wls',
+      },
+      gcpPermissions,
+    });
+  }
+
+  try {
+    const [meRes, whRes] = await Promise.all([
+      fetch(`https://api.telegram.org/bot${token}/getMe`),
+      fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`),
+    ]);
+
+    const meData = (await meRes.json()) as any;
+    const whData = (await whRes.json()) as any;
+
+    const bot = meData.ok ? meData.result : null;
+    const webhook = whData.ok && whData.result
+      ? {
+          ...whData.result,
+          url: sanitizeWebhookUrl(whData.result.url),
+        }
+      : null;
+    const webhookMatches = Boolean(expectedWebhookUrl && whData.result?.url === expectedWebhookUrl);
+    const connected = Boolean(bot && (expectedWebhookUrl ? webhookMatches : Boolean(webhook?.url)));
+
+    return res.json({
+      success: true,
+      connected,
+      hasToken: true,
+      maskedToken: maskToken(token),
+      bot,
+      webhook,
+      expectedWebhookUrl,
+      webhookMatches,
+      publicBaseUrl,
+      publicBaseUrlConfigured: Boolean(publicBaseUrl),
+      webhookSecretConfigured: Boolean(currentWebhookSecret),
+      cloudRunConfig: {
+        serviceName: 'mine-aimbot',
+        region: 'us-west2',
+        projectId: 'jumping-agility-75wls',
+      },
+      gcpPermissions,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: 'Error consultando Telegram API: ' + (err instanceof Error ? err.message : String(err)),
+      hasToken: true,
+      maskedToken: maskToken(token),
+    });
+  }
+});
+
+// POST /api/telegram/connect
+app.post('/api/telegram/connect', async (req, res) => {
+  const { token, overwriteWebhook, adminAuthKey } = req.body;
+
+  // 1. Admin Verification (if configured)
+  if (ADMIN_TELEGRAM_ID && adminAuthKey && String(adminAuthKey).trim() !== ADMIN_TELEGRAM_ID) {
+    return res.status(403).json({
+      success: false,
+      error: 'Autorización administrativa denegada. El ID de administrador no coincide.',
+    });
+  }
+
+  // 2. Validate token format
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: 'Debes proporcionar un token de Telegram válido emitido por @BotFather.',
+    });
+  }
+
+  const cleanToken = token.trim();
+  if (!/^\d+:[A-Za-z0-9_-]{25,55}$/.test(cleanToken)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Formato de token inválido. El token de Telegram debe tener el formato: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz...',
+    });
+  }
+
+  // 3. Query getMe directly against Telegram API
+  try {
+    const meRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+    const meData = (await meRes.json()) as any;
+
+    if (!meData.ok) {
+      return res.status(401).json({
+        success: false,
+        error: `Telegram API rechazó el token: ${meData.description || 'Código no autorizado (401)'}. Verifica el token en @BotFather.`,
+      });
+    }
+
+    const botInfo = meData.result;
+
+    // 4. Query existing webhook info on Telegram
+    const whRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
+    const whData = (await whRes.json()) as any;
+    const existingWebhookUrl = whData.ok ? whData.result?.url : '';
+
+    const publicBaseUrl = PUBLIC_BASE_URL;
+    const targetWebhookUrl = publicBaseUrl ? `${publicBaseUrl}/api/telegram/webhook` : null;
+
+    // 5. Overwrite confirmation guard (Requirement: "No sobrescribir un webhook sin confirmación del administrador")
+    const safeExistingWebhookUrl = sanitizeWebhookUrl(existingWebhookUrl);
+    if (existingWebhookUrl && targetWebhookUrl && existingWebhookUrl !== targetWebhookUrl && !overwriteWebhook) {
+      return res.json({
+        success: false,
+        requiresConfirmation: true,
+        existingWebhookUrl: safeExistingWebhookUrl,
+        targetWebhookUrl,
+        bot: botInfo,
+        message: `El bot @${botInfo.username} ya tiene un webhook configurado hacia "${safeExistingWebhookUrl}". ¿Deseas reemplazarlo con la URL de tu servicio "${targetWebhookUrl}"?`,
+      });
+    }
+
+    // 6. Update token in backend runtime
+    currentBotToken = cleanToken;
+    process.env.TELEGRAM_BOT_TOKEN = cleanToken;
+
+    // 7. Register webhook if PUBLIC_BASE_URL is available
+    let webhookResult = whData.ok && whData.result
+      ? { ...whData.result, url: safeExistingWebhookUrl }
+      : null;
+    let webhookRegistered = false;
+    let webhookNotice = '';
+
+    if (targetWebhookUrl) {
+      const secretTokenParam = currentWebhookSecret ? `&secret_token=${encodeURIComponent(currentWebhookSecret)}` : '';
+      const setRes = await fetch(
+        `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretTokenParam}&drop_pending_updates=false`
+      );
+      const setData = (await setRes.json()) as any;
+
+      if (setData.ok) {
+        webhookRegistered = true;
+        // Verify with getWebhookInfo
+        const verifyWhRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
+        const verifyWhData = (await verifyWhRes.json()) as any;
+        if (verifyWhData.ok && verifyWhData.result) {
+          webhookResult = {
+            ...verifyWhData.result,
+            url: sanitizeWebhookUrl(verifyWhData.result.url),
+          };
+        }
+      } else {
+        webhookNotice = `El token es válido para @${botInfo.username}, pero Telegram devolvió error al registrar el webhook: ${setData.description || 'Fallo desconocido'}`;
+      }
+    } else {
+      webhookNotice = `El token es válido para @${botInfo.username}, pero PUBLIC_BASE_URL aún no está configurado en Cloud Run. Configúralo para activar el webhook.`;
+    }
+
+    // 8. Check GCP Secret Manager & Cloud Run permissions
+    const gcpPermissions = await checkGcpSecretManagerAndCloudRun();
+
+    const isConnected = webhookRegistered && Boolean(webhookResult?.url);
+
+    return res.json({
+      success: true,
+      connected: isConnected,
+      bot: botInfo,
+      webhook: webhookResult,
+      webhookRegistered,
+      webhookNotice,
+      maskedToken: maskToken(cleanToken),
+      publicBaseUrl,
+      gcpPermissions,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: 'Error de red comunicándose con la API de Telegram: ' + (err instanceof Error ? err.message : String(err)),
+    });
+  }
+});
+
+// POST /api/telegram/disconnect
+app.post('/api/telegram/disconnect', async (_req, res) => {
+  const token = getActiveBotToken();
+  if (!token) {
+    return res.json({ success: true, message: 'No había ningún bot de Telegram activo en la sesión.' });
+  }
+
+  try {
+    // Delete webhook from Telegram API
+    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`);
+  } catch (err) {
+    console.warn('[Telegram Disconnect] Error llamando deleteWebhook:', err);
+  }
+
+  currentBotToken = undefined;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+
+  return res.json({
+    success: true,
+    message: 'Bot de Telegram desconectado exitosamente y webhook eliminado.',
+    connected: false,
+  });
+});
+
+// POST /api/telegram/set-webhook
+app.post('/api/telegram/set-webhook', async (req, res) => {
+  const token = getActiveBotToken();
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'No hay ningún token de Telegram activo. Primero valida y conecta tu bot.' });
+  }
+
+  const { customBaseUrl, customSecret } = req.body;
+  const baseUrl = (customBaseUrl || PUBLIC_BASE_URL || '').replace(/\/$/, '');
+
+  if (!baseUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'PUBLIC_BASE_URL no está configurado. Especifica la URL HTTPS de tu servicio de Cloud Run (ej. https://mine-aimbot-xxxx-uc.a.run.app).',
+    });
+  }
+
+  const targetWebhookUrl = `${baseUrl}/api/telegram/webhook`;
+  const secret = customSecret || currentWebhookSecret || '';
+  const secretParam = secret ? `&secret_token=${encodeURIComponent(secret)}` : '';
+
+  try {
+    const setRes = await fetch(
+      `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretParam}&drop_pending_updates=false`
+    );
+    const setData = (await setRes.json()) as any;
+
+    if (!setData.ok) {
+      return res.status(400).json({
+        success: false,
+        error: `Telegram rechazó setWebhook: ${setData.description || 'Error desconocido'}`,
+      });
+    }
+
+    const verifyWhRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const verifyWhData = (await verifyWhRes.json()) as any;
+
+    return res.json({
+      success: true,
+      webhook: verifyWhData.ok ? verifyWhData.result : null,
+      message: 'Webhook registrado exitosamente en Telegram hacia ' + targetWebhookUrl,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: 'Error comunicando con Telegram: ' + (err instanceof Error ? err.message : String(err)),
+    });
+  }
+});
+
+const server = app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`🚀 [Juan Carlos | Mines AI 💎] Servidor backend escuchando en el puerto ${PORT} en 0.0.0.0`);
   console.log(`📡 Webhook Telegram configurado en: /api/telegram/webhook`);
   console.log(`🔥 Base de datos: Firebase Cloud Firestore (${firebaseConfig.firestoreDatabaseId})`);
 });

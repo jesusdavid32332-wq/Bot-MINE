@@ -13,45 +13,54 @@ service cloud.firestore {
 
     // Users collection: Telegram bot users & registration statuses
     match /users/{userId} {
-      allow read, write: if isValidId(userId);
+      allow get, write: if isValidId(userId);
+      allow list: if true;
     }
 
     // Messages collection: Sequenced message templates
     match /messages/{messageId} {
-      allow read, write: if isValidId(messageId);
+      allow get, write: if isValidId(messageId);
+      allow list: if true;
     }
 
     // Conversations collection: Chat histories
     match /conversations/{userId} {
-      allow read, write: if isValidId(userId);
+      allow get, write: if isValidId(userId);
+      allow list: if true;
       match /messages/{msgId} {
-        allow read, write: if isValidId(msgId);
+        allow get, write: if isValidId(msgId);
+        allow list: if true;
       }
     }
 
     // Flows collection: Step configuration nodes
     match /flows/{flowId} {
-      allow read, write: if isValidId(flowId);
+      allow get, write: if isValidId(flowId);
+      allow list: if true;
     }
 
     // Conditions collection: Keyword dictionaries
     match /conditions/{conditionId} {
-      allow read, write: if isValidId(conditionId);
+      allow get, write: if isValidId(conditionId);
+      allow list: if true;
     }
 
     // Media collection: Photos and videos
     match /media/{mediaId} {
-      allow read, write: if isValidId(mediaId);
+      allow get, write: if isValidId(mediaId);
+      allow list: if true;
     }
 
     // Settings collection: Bot config and general config
     match /settings/{settingId} {
-      allow read, write: if isValidId(settingId);
+      allow get, write: if isValidId(settingId);
+      allow list: if true;
     }
 
     // Processed updates collection: Telegram update_id deduplication
     match /processed_updates/{updateId} {
-      allow read, write: if isValidId(updateId);
+      allow get, write: if isValidId(updateId);
+      allow list: if true;
     }
 
     // Test connection doc

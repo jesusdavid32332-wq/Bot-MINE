@@ -14,6 +14,10 @@ const SECTION_TITLES: Record<SectionId, { title: string; subtitle: string }> = {
     title: 'Dashboard Ejecutivo',
     subtitle: 'Métricas en tiempo real, embudo de conversión y estado de Cloud Firestore',
   },
+  'telegram-connection': {
+    title: 'Conexión de Telegram',
+    subtitle: 'Vinculación de BotFather, validación con Telegram API y estado del Webhook',
+  },
   messages: {
     title: 'Mensajes Automáticos',
     subtitle: '15 pasos programados, botones de respuesta rápida y archivos multimedia',

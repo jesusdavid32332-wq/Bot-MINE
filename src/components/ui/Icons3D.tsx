@@ -567,3 +567,34 @@ export const TelegramAdminIcon3D: React.FC<Icon3DProps> = ({ className = '', siz
     />
   </svg>
 );
+
+// 15. TELEGRAM CONEXIÓN 3D ICON (Cyan and Blue Glowing Telegram Jet with Antenna Connection Ring)
+export const TelegramConnectIcon3D: React.FC<Icon3DProps> = ({ className = '', size = 20 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 32 32"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`shrink-0 overflow-visible transition-transform duration-200 group-hover:scale-105 ${className}`}
+  >
+    <ellipse cx="16" cy="27" rx="11" ry="3.5" fill="#000000" fillOpacity="0.45" />
+    {/* Outer Cyan Connection Ring */}
+    <circle cx="16" cy="15.5" r="12.5" fill="url(#obsidianGlass)" stroke="url(#cyanGrad3D)" strokeWidth="1.5" filter="url(#shadow3D)" />
+    {/* Glowing Telegram Blue Disc */}
+    <circle cx="16" cy="15.5" r="10" fill="url(#cyanGrad3D)" fillOpacity="0.9" />
+    {/* Paper Plane in Pure White and Silver Specular */}
+    <path
+      d="M10 15.5L22 10.5L18.5 21L15 17L10 15.5Z"
+      fill="#ffffff"
+      filter="url(#shadow3D)"
+    />
+    <path
+      d="M15 17L14.2 20.2L16.2 18.5"
+      fill="#94a3b8"
+    />
+    {/* Connection Node Indicator */}
+    <circle cx="23.5" cy="8.5" r="2.2" fill="url(#goldGrad3D)" stroke="#091124" strokeWidth="1" />
+  </svg>
+);
+

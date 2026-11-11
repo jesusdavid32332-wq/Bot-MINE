@@ -15,6 +15,7 @@ import {
   LinksIcon3D,
   BotConfigIcon3D,
   GeneralConfigIcon3D,
+  TelegramConnectIcon3D,
 } from '../ui/Icons3D';
 import { ShieldCheck, Flame, Radio } from 'lucide-react';
 
@@ -38,6 +39,7 @@ interface MenuItem {
 
 const MENU_ITEMS: MenuItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon3D },
+  { id: 'telegram-connection', label: 'Conexión de Telegram', icon: TelegramConnectIcon3D, badgeKey: 'fixed', badgeStatic: 'BOT' },
   { id: 'messages', label: 'Mensajes automáticos', icon: MessagesIcon3D, badgeKey: 'messages' },
   { id: 'flow', label: 'Flujo de conversaciones', icon: FlowIcon3D },
   { id: 'id-tracking', label: 'Seguimiento de IDs', icon: IdTrackingIcon3D, badgeKey: 'ids' },

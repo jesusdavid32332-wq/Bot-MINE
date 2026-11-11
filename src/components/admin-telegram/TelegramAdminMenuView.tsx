@@ -36,6 +36,36 @@ export const TelegramAdminMenuView: React.FC<TelegramAdminMenuViewProps> = ({
   const [keywordsYesInput, setKeywordsYesInput] = useState(keywordConfig.keywordsYes.join(', '));
   const [keywordsNoInput, setKeywordsNoInput] = useState(keywordConfig.keywordsNo.join(', '));
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSendingTest, setIsSendingTest] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleSendTestMessage = async () => {
+    setIsSendingTest(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/telegram/test-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: adminId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestResult({
+          success: true,
+          message: `Mensaje de prueba enviado a Telegram ID ${data.chatId} (Msg ID: ${data.messageId})`,
+        });
+      } else {
+        setTestResult({
+          success: false,
+          message: data.error || 'Fallo al enviar mensaje de prueba',
+        });
+      }
+    } catch (e: any) {
+      setTestResult({ success: false, message: e.message });
+    } finally {
+      setIsSendingTest(false);
+    }
+  };
 
   // Simulated Telegram Admin Chat Simulator State
   const [activeAdminSubMenu, setActiveAdminSubMenu] = useState<string>('main');
@@ -146,15 +176,51 @@ export const TelegramAdminMenuView: React.FC<TelegramAdminMenuViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {saveSuccess && (
             <span className="text-xs text-emerald-400 flex items-center gap-1 font-semibold">
               <CheckCircle className="w-4 h-4" />
               Guardado
             </span>
           )}
+
+          <button
+            type="button"
+            onClick={handleSendTestMessage}
+            disabled={isSendingTest}
+            className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            title="Enviar mensaje de prueba directo al ADMIN_TELEGRAM_ID"
+          >
+            <Send className={`w-3.5 h-3.5 ${isSendingTest ? 'animate-pulse' : ''}`} />
+            <span>{isSendingTest ? 'Enviando...' : 'Enviar mensaje de prueba'}</span>
+          </button>
         </div>
       </div>
+
+      {testResult && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs font-medium flex items-center justify-between gap-2 ${
+            testResult.success
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+              : 'bg-red-950/40 border-red-500/40 text-red-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {testResult.success ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" />
+            )}
+            <span>{testResult.message}</span>
+          </div>
+          <button
+            onClick={() => setTestResult(null)}
+            className="text-slate-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

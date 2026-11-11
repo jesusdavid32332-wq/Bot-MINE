@@ -27,6 +27,7 @@ import { SupportView } from './components/support/SupportView';
 import { LinksView } from './components/links/LinksView';
 import { BotConfigView } from './components/bot-config/BotConfigView';
 import { GeneralConfigView } from './components/general-config/GeneralConfigView';
+import { TelegramConnectionView } from './components/telegram-connection/TelegramConnectionView';
 
 export default function App() {
   const [currentSection, setCurrentSection] = useState<SectionId>('dashboard');
@@ -159,6 +160,10 @@ export default function App() {
                 onNavigateSection={(sec) => setCurrentSection(sec)}
                 onOpenSimulator={() => setIsSimulatorOpen(true)}
               />
+            )}
+
+            {currentSection === 'telegram-connection' && (
+              <TelegramConnectionView adminTelegramId={generalConfig.adminTelegramId || '684920153'} />
             )}
 
             {currentSection === 'messages' && (
