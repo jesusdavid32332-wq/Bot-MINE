@@ -104,8 +104,6 @@ async function answerTelegramCallback(callbackQueryId: string, text?: string) {
   }
 }
 
-app.use(express.json());
-
 // CORS headers
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -113,6 +111,34 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-telegram-bot-api-secret-token');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
+  }
+  next();
+});
+
+// Support for serverless environments (like Vercel) where req.body might already be parsed
+app.use((req: Request, _res: Response, next) => {
+  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+    (req as any)._body = true;
+  }
+  next();
+});
+
+app.use(express.json());
+
+// Normalizer: if a request arrived at a subpath without /api, map it to /api
+app.use((req: Request, _res: Response, next) => {
+  if (req.url && !req.url.startsWith('/api/') && req.url !== '/api' && !req.url.startsWith('/health') && !req.url.startsWith('/public') && !req.url.startsWith('/assets')) {
+    const isApiSubpath = req.url.startsWith('/telegram/') ||
+      req.url.startsWith('/users') ||
+      req.url.startsWith('/messages') ||
+      req.url.startsWith('/media') ||
+      req.url.startsWith('/conditions') ||
+      req.url.startsWith('/bot-config') ||
+      req.url.startsWith('/general-config') ||
+      req.url.startsWith('/conversations');
+    if (isApiSubpath) {
+      req.url = '/api' + req.url;
+    }
   }
   next();
 });
@@ -412,7 +438,18 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
 // ==========================================
 // 1. TELEGRAM WEBHOOK ENDPOINT
 // ==========================================
-app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
+app.get(['/api/telegram/webhook', '/telegram/webhook'], (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'juan-carlos-mines-ai-bot',
+    endpoint: '/api/telegram/webhook',
+    method: 'POST',
+    description: 'Receptor de webhook oficial de Telegram',
+    activeBotToken: Boolean(getActiveBotToken()),
+  });
+});
+
+app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, res: Response) => {
   const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
   const update = req.body;
 
@@ -1128,9 +1165,18 @@ app.get('/api/telegram/diagnose', async (_req: Request, res: Response) => {
   });
 });
 
-// POST /api/telegram/simulate-update
-app.post('/api/telegram/simulate-update', async (req: Request, res: Response) => {
-  const { text, chatId, userId, firstName, username } = req.body;
+// GET & POST /api/telegram/simulate-update
+app.get(['/api/telegram/simulate-update', '/telegram/simulate-update'], (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    endpoint: '/api/telegram/simulate-update',
+    method: 'POST',
+    usage: 'Envía un POST con { text: "/start", chatId: 684920153 } para simular un comando de Telegram.',
+  });
+});
+
+app.post(['/api/telegram/simulate-update', '/telegram/simulate-update'], async (req: Request, res: Response) => {
+  const { text, chatId, userId, firstName, username } = req.body || {};
   const targetText = text || '/start';
   const targetChatId = chatId || 999999;
   const targetUserId = userId || targetChatId;

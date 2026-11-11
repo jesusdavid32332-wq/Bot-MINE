@@ -2,7 +2,15 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/((?!api/|_next/|_static/|[\\w-]+\\.\\w+).*)",
+      "source": "/api/telegram/webhook",
+      "destination": "/api/telegram/webhook"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/[...all]"
+    },
+    {
+      "source": "/((?!api(?:/|$)|_next/|_static/|[\\w-]+\\.\\w+).*)",
       "destination": "/index.html"
     }
   ]
