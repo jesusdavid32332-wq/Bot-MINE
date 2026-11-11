@@ -456,6 +456,8 @@ Quiero mostrarte cómo funciona nuestro sistema de información y análisis del 
 Primero quiero conocerte un poquito.
 
 *¿De qué país nos escribes?* 🌎`,
+      mediaUrl: '/public/assets/aistudio/IMG_7992_53256945.jpeg',
+      mediaType: 'photo',
       buttons: [
         { id: 'btn-co', text: '🇨🇴 Colombia', type: 'callback', value: 'pais_colombia' },
         { id: 'btn-otro', text: '🌎 Otro país', type: 'callback', value: 'pais_otro' },
@@ -465,7 +467,7 @@ Primero quiero conocerte un poquito.
     return {
       updatedUser,
       messagesToSend,
-      recognizedAction: 'Inicio de conversación con /start',
+      recognizedAction: 'Inicio de conversación con /start (Foto de bienvenida + Teclado de país)',
     };
   }
 

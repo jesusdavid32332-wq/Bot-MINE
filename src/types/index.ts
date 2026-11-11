@@ -254,17 +254,58 @@ export interface TelegramWebhookInfo {
   allowed_updates?: string[];
 }
 
+export type VerificationStatusBadge = 'VERIFICADO' | 'PENDIENTE' | 'ERROR' | 'REQUIERE_AUTORIZACION';
+
+export interface TelegramSeparatedStates {
+  tokenAuthenticated: {
+    status: VerificationStatusBadge;
+    message: string;
+    botId?: number;
+    username?: string;
+  };
+  webhookRegistered: {
+    status: VerificationStatusBadge;
+    url?: string;
+    message: string;
+  };
+  webhookAccessible: {
+    status: VerificationStatusBadge;
+    message: string;
+  };
+  updatesReceived: {
+    status: VerificationStatusBadge;
+    message: string;
+    pendingCount?: number;
+  };
+  updatesProcessed: {
+    status: VerificationStatusBadge;
+    message: string;
+  };
+  messagesSentSuccessfully: {
+    status: VerificationStatusBadge;
+    message: string;
+  };
+  deliveryErrors: {
+    status: VerificationStatusBadge;
+    message: string;
+  };
+}
+
 export interface TelegramConnectionStatus {
   connected: boolean;
   hasToken: boolean;
   maskedToken?: string;
-  bot?: TelegramBotInfo;
-  webhook?: TelegramWebhookInfo;
+  tokenError?: string;
+  bot?: TelegramBotInfo | null;
+  webhook?: TelegramWebhookInfo | null;
   expectedWebhookUrl?: string | null;
   webhookMatches?: boolean;
   publicBaseUrl?: string;
   publicBaseUrlConfigured: boolean;
   webhookSecretConfigured: boolean;
+  databaseType?: string;
+  databaseConfigured?: boolean;
+  separatedStates?: TelegramSeparatedStates;
   cloudRunConfig?: {
     serviceName: string;
     region: string;
@@ -277,5 +318,6 @@ export interface TelegramConnectionStatus {
     requiredRoles: string[];
     gcloudCommands: string[];
   };
+  lastChecked?: string;
 }
 

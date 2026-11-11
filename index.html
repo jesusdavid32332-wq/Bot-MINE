@@ -5,24 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       // Ignore HMR WebSocket connection errors in iFrame sandbox per environment instructions
-      window.addEventListener('unhandledrejection', function (event) {
-        if (
-          event.reason &&
-          (event.reason.message?.includes('WebSocket') ||
-            event.reason.message?.includes('ws') ||
-            String(event.reason?.stack).includes('@vite/client'))
-        ) {
-          event.preventDefault();
+      (function() {
+        function isViteHmrError(err) {
+          if (!err) return false;
+          var msg = String(err.message || err || '');
+          var stack = String(err.stack || '');
+          var file = String(err.filename || '');
+          return (
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('ws') !== -1 ||
+            stack.indexOf('@vite/client') !== -1 ||
+            stack.indexOf('WebSocket') !== -1 ||
+            file.indexOf('@vite/client') !== -1
+          );
         }
-      });
-      window.addEventListener('error', function (event) {
-        if (
-          event.message?.includes('WebSocket') ||
-          String(event.filename).includes('@vite/client')
-        ) {
-          event.preventDefault();
-        }
-      });
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (isViteHmrError(event.reason)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          if (
+            isViteHmrError(event.error) ||
+            isViteHmrError(event.message) ||
+            (event.filename && event.filename.indexOf('@vite/client') !== -1)
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+      })();
     </script>
     <title>Juan Carlos | Mines AI 💎 — Panel de Administración</title>
     <meta name="description" content="Panel de administración y control integral para el bot de Telegram Juan Carlos | Mines AI 💎: gestión de mensajes automáticos, flujos condicionales de conversación, IA Gemini, tutoriales, biblioteca multimedia, usuarios y enlaces." />

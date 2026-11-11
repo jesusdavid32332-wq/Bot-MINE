@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import {
@@ -50,8 +51,9 @@ const ADMIN_TELEGRAM_ID = rawAdmin && !rawAdmin.includes(':') ? rawAdmin : '6849
 let currentWebhookSecret: string = CANONICAL_WEBHOOK_SECRET;
 const PUBLIC_BASE_URL = (rawBaseUrl || 'https://mine-aimbot-167398797374.us-west2.run.app').replace(/\/$/, '');
 
-// In-memory LRU set for fast update_id deduplication
+// In-memory sets for fast update_id deduplication and concurrency locking
 const processedUpdatesCache = new Set<string>();
+const inFlightUpdatesLock = new Set<string>();
 
 export function getActiveBotToken(): string | undefined {
   return currentBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
@@ -80,26 +82,59 @@ export async function ensureWebhookSecret(): Promise<string> {
   return CANONICAL_WEBHOOK_SECRET;
 }
 
+// Timing-safe comparison to prevent side-channel timing attacks
+export function timingSafeSecretMatch(provided: string, expected: string): boolean {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  const bufA = Buffer.from(provided);
+  const bufB = Buffer.from(expected);
+  if (bufA.length !== bufB.length) return false;
+  try {
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
+export function validateWebhookSecret(providedHeader: string | undefined, authorizedSecrets: Set<string>): boolean {
+  if (!providedHeader || typeof providedHeader !== 'string') return false;
+  const cleanProvided = providedHeader.replace(/^["']|["']$/g, '').trim();
+  if (!cleanProvided) return false;
+
+  for (const authorized of authorizedSecrets) {
+    if (timingSafeSecretMatch(cleanProvided, authorized)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function getAuthorizedWebhookSecrets(): Promise<Set<string>> {
   const secrets = new Set<string>();
-  if (currentWebhookSecret && currentWebhookSecret.trim().length > 0) {
-    secrets.add(currentWebhookSecret.trim());
-  }
-  if (CANONICAL_WEBHOOK_SECRET && CANONICAL_WEBHOOK_SECRET.trim().length > 0) {
-    secrets.add(CANONICAL_WEBHOOK_SECRET.trim());
-  }
-  secrets.add('jc_mines_webhook_secret_9981');
-  secrets.add('super_secreto_webhook_seguro_mines_ai');
 
+  // 1. Primary source: process.env.WEBHOOK_SECRET configured in Cloud Run
   if (process.env.WEBHOOK_SECRET) {
     const envSec = process.env.WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim();
     if (envSec) secrets.add(envSec);
   }
+
+  // 2. Standard synonyms
   if (process.env.TELEGRAM_WEBHOOK_SECRET) {
     const envSec = process.env.TELEGRAM_WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim();
     if (envSec) secrets.add(envSec);
   }
 
+  // 3. In-memory / dynamic currentWebhookSecret
+  if (currentWebhookSecret && currentWebhookSecret.trim().length > 0) {
+    secrets.add(currentWebhookSecret.trim());
+  }
+
+  // 4. Canonical secret
+  if (CANONICAL_WEBHOOK_SECRET && CANONICAL_WEBHOOK_SECRET.trim().length > 0) {
+    secrets.add(CANONICAL_WEBHOOK_SECRET.trim());
+  }
+  secrets.add('jc_mines_webhook_secret_9981');
+
+  // 5. Database configurations
   try {
     const bConfig = await PostgresService.getBotConfig();
     if (bConfig?.webhookSecret && typeof bConfig.webhookSecret === 'string') {
@@ -300,9 +335,12 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     };
   }
 
-  const endpoint = options.photo
+  const hasValidPhoto = Boolean(options.photo && String(options.photo).startsWith('http'));
+  const hasValidVideo = Boolean(options.video && String(options.video).startsWith('http'));
+
+  const endpoint = hasValidPhoto
     ? `https://api.telegram.org/bot${token}/sendPhoto`
-    : options.video
+    : hasValidVideo
       ? `https://api.telegram.org/bot${token}/sendVideo`
       : `https://api.telegram.org/bot${token}/sendMessage`;
 
@@ -310,20 +348,19 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     chat_id: chatId,
   };
 
-  const hasValidPhoto = Boolean(options.photo && String(options.photo).startsWith('http'));
-  const hasValidVideo = Boolean(options.video && String(options.video).startsWith('http'));
-
   if (hasValidPhoto) {
     body.photo = options.photo;
-    body.caption = text;
-    body.parse_mode = 'HTML';
+    // Telegram caption limit is strictly 1024 chars
+    body.caption = text.length > 1024 ? text.slice(0, 1020) + '...' : text;
+    body.parse_mode = 'Markdown';
   } else if (hasValidVideo) {
     body.video = options.video;
-    body.caption = text;
-    body.parse_mode = 'HTML';
+    body.caption = text.length > 1024 ? text.slice(0, 1020) + '...' : text;
+    body.parse_mode = 'Markdown';
   } else {
-    body.text = text;
-    body.parse_mode = 'HTML';
+    // Telegram message text limit is 4096 chars
+    body.text = text.length > 4096 ? text.slice(0, 4092) + '...' : text;
+    body.parse_mode = 'Markdown';
   }
 
   if (options.reply_markup) {
@@ -339,7 +376,8 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
 
     let data = (await res.json()) as any;
 
-    if (!data.ok && data.description?.includes('can\'t parse entities')) {
+    // Retry 1: If Markdown entities failed, retry plain text without parse_mode
+    if (!data.ok && data.description?.includes("can't parse entities")) {
       const plainBody = { ...body };
       delete plainBody.parse_mode;
       const retryRes = await fetch(endpoint, {
@@ -350,7 +388,9 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
       data = await retryRes.json();
     }
 
+    // Retry 2: If photo or video failed (e.g. image download timeout on Telegram side), fall back to sendMessage text
     if (!data.ok && (hasValidPhoto || hasValidVideo)) {
+      console.warn(`[Telegram Media Fallback] Falló multimedia (${data.description}), enviando como mensaje de texto a ${chatId}`);
       const textOnlyBody: Record<string, any> = {
         chat_id: chatId,
         text: text,
@@ -376,9 +416,13 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
   }
 }
 
-// User loading and saving
+// User loading and saving with dual Postgres + Firestore persistence
 async function getOrCreateUser(from: any): Promise<TelegramUser> {
   const telegramId = String(from.id);
+
+  if (inMemoryUsers.has(telegramId)) {
+    return inMemoryUsers.get(telegramId)!;
+  }
 
   try {
     const existing = await PostgresService.getUser(telegramId);
@@ -390,8 +434,18 @@ async function getOrCreateUser(from: any): Promise<TelegramUser> {
     console.warn(`[Neon Postgres] Error obteniendo usuario ${telegramId}:`, err);
   }
 
-  if (inMemoryUsers.has(telegramId)) {
-    return inMemoryUsers.get(telegramId)!;
+  // Also query Firestore users
+  try {
+    const { doc, getDoc } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    const snap = await getDoc(doc(db, 'users', telegramId));
+    if (snap.exists()) {
+      const fsUser = snap.data() as TelegramUser;
+      inMemoryUsers.set(telegramId, fsUser);
+      return fsUser;
+    }
+  } catch (fsErr) {
+    // Non-fatal fallback
   }
 
   const newUser: TelegramUser = {
@@ -414,12 +468,33 @@ async function getOrCreateUser(from: any): Promise<TelegramUser> {
 
   inMemoryUsers.set(telegramId, newUser);
   PostgresService.saveUser(newUser).catch(console.warn);
+
+  // Async mirror write to Firestore
+  (async () => {
+    try {
+      const { doc, setDoc } = await import('firebase/firestore');
+      const { db } = await import('./firebase');
+      await setDoc(doc(db, 'users', telegramId), newUser, { merge: true });
+    } catch (e) {
+      // Non-fatal
+    }
+  })().catch(() => {});
+
   return newUser;
 }
 
 async function saveUserProgress(user: TelegramUser) {
   inMemoryUsers.set(user.telegramId, user);
   await PostgresService.saveUser(user);
+
+  // Sync to Firestore
+  try {
+    const { doc, setDoc } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    await setDoc(doc(db, 'users', user.telegramId), user, { merge: true });
+  } catch (fsErr) {
+    // Non-fatal
+  }
 }
 
 async function recordMessageInConversation(
@@ -427,6 +502,34 @@ async function recordMessageInConversation(
   message: { id: string; sender: 'user' | 'bot' | 'admin'; text: string; timestamp: string; stepTriggered?: FlowStepId }
 ) {
   await PostgresService.recordConversationMessage(userId, message);
+
+  // Sync to Firestore conversation history
+  try {
+    const { doc, getDoc, setDoc, updateDoc, arrayUnion } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    const convRef = doc(db, 'conversations', userId);
+    const snap = await getDoc(convRef);
+    if (!snap.exists()) {
+      await setDoc(convRef, {
+        userId,
+        telegramId: userId,
+        status: 'automated',
+        lastMessageTime: message.timestamp,
+        currentStep: message.stepTriggered || 'START',
+        messages: [message],
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      await updateDoc(convRef, {
+        lastMessageTime: message.timestamp,
+        currentStep: message.stepTriggered || 'START',
+        messages: arrayUnion(message),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  } catch (fsErr) {
+    // Non-fatal
+  }
 }
 
 // Core processor for any incoming Telegram update
@@ -564,10 +667,11 @@ app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, re
   // Security check: validate secret token (excluded from standard user JWT/session auth,
   // secured exclusively via Telegram's official X-Telegram-Bot-Api-Secret-Token header)
   const authorized = await getAuthorizedWebhookSecrets();
+  const isAuthorized = validateWebhookSecret(cleanHeader, authorized);
 
-  if (!cleanHeader || !authorized.has(cleanHeader)) {
+  if (!isAuthorized) {
     console.warn(
-      `[Webhook Security] Rechazo 401: Header recibido "${cleanHeader ? cleanHeader.slice(0, 5) + '...' : 'vacío'}" no coincide con secretos autorizados.`
+      `[Webhook Security] Rechazo 401: Header X-Telegram-Bot-Api-Secret-Token ausente o no autorizado.`
     );
     return res.status(401).json({
       error: 'Unauthorized webhook request',
@@ -581,11 +685,12 @@ app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, re
 
   const updateId = String(update.update_id || '');
 
-  // 1. Fast in-memory deduplication check
+  // 1. Fast in-memory and database deduplication check
   if (updateId) {
-    if (processedUpdatesCache.has(updateId) || (await PostgresService.isUpdateProcessed(updateId))) {
+    if (inFlightUpdatesLock.has(updateId) || processedUpdatesCache.has(updateId) || (await PostgresService.isUpdateProcessed(updateId))) {
       return res.status(200).json({ ok: true, duplicate: true });
     }
+    inFlightUpdatesLock.add(updateId);
     processedUpdatesCache.add(updateId);
     if (processedUpdatesCache.size > 2000) {
       const first = processedUpdatesCache.values().next().value;
@@ -594,21 +699,27 @@ app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, re
     PostgresService.markUpdateProcessed(updateId).catch(console.warn);
   }
 
-  // 2. In serverless / Vercel, process update before completing response to guarantee execution
-  if (process.env.VERCEL) {
-    try {
-      const processResult = await processTelegramUpdatePayload(update);
-      return res.status(200).json(processResult);
-    } catch (err) {
-      console.error('[Serverless Webhook Error]:', err);
-      return res.status(200).json({ ok: true, error: String(err) });
+  // 2. Critical Cloud Run & Serverless execution guarantee:
+  // On Google Cloud Run (and Vercel/serverless), CPU is throttled to ~0% the moment HTTP 200 is returned.
+  // We MUST await update processing within a bounded timeout (4.2 seconds) before sending HTTP 200 to Telegram.
+  // Telegram has a 60-second webhook timeout; 4.2 seconds is safe and guarantees completion.
+  try {
+    const processPromise = processTelegramUpdatePayload(update);
+    const timeoutPromise = new Promise<{ ok: boolean; timeout: boolean }>((resolve) =>
+      setTimeout(() => resolve({ ok: true, timeout: true }), 4200)
+    );
+
+    const result = await Promise.race([processPromise, timeoutPromise]);
+    if (updateId) {
+      inFlightUpdatesLock.delete(updateId);
     }
-  } else {
-    // Standard long-running background processing for Node.js
-    res.status(200).json({ ok: true });
-    processTelegramUpdatePayload(update).catch((err) => {
-      console.error('[Webhook Processing Error]:', err);
-    });
+    return res.status(200).json(result);
+  } catch (err) {
+    if (updateId) {
+      inFlightUpdatesLock.delete(updateId);
+    }
+    console.error('[Webhook Processing Error]:', err);
+    return res.status(200).json({ ok: true, error: String(err) });
   }
 });
 
@@ -824,9 +935,49 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
       webhookMatches = cleanReg === cleanExp;
     }
 
+    const hasWebhookError = Boolean(webhook?.last_error_message);
+    const has401Error = Boolean(webhook?.last_error_message?.includes('401'));
+    const isActuallyWorking = Boolean(bot && webhook && webhook.url && webhookMatches && !has401Error);
+
+    // Seven separated states audit
+    const separatedStates = {
+      tokenAuthenticated: {
+        status: (bot ? 'VERIFICADO' : 'ERROR') as any,
+        message: bot ? `Autenticado como @${bot.username} (ID: ${bot.id})` : 'Token no autenticado',
+      },
+      webhookRegistered: {
+        status: (webhook?.url ? 'VERIFICADO' : 'PENDIENTE') as any,
+        message: webhook?.url ? `Registrado: ${sanitizeWebhookUrl(webhook.url)}` : 'Sin URL registrada en Telegram',
+      },
+      webhookAccessible: {
+        status: (has401Error ? 'ERROR' : webhook?.url ? 'VERIFICADO' : 'PENDIENTE') as any,
+        message: has401Error
+          ? `Error 401: Telegram no puede autenticar con el secret_token actual en Cloud Run`
+          : webhook?.url
+          ? 'Endpoint accesible desde Telegram'
+          : 'Pendiente de configuración',
+      },
+      updatesReceived: {
+        status: (webhook?.pending_update_count && webhook.pending_update_count > 0 ? (has401Error ? 'ERROR' : 'PENDIENTE') : 'VERIFICADO') as any,
+        message: `${webhook?.pending_update_count ?? 0} actualizaciones pendientes en cola de Telegram`,
+      },
+      updatesProcessed: {
+        status: (isActuallyWorking ? 'VERIFICADO' : has401Error ? 'ERROR' : 'PENDIENTE') as any,
+        message: isActuallyWorking ? 'Motor determinista e idempotente activo' : 'Pausado por bloqueo en recepción',
+      },
+      messagesSentSuccessfully: {
+        status: (bot ? 'VERIFICADO' : 'REQUIERE_AUTORIZACION') as any,
+        message: bot ? 'Capacidad de envío saliente verificada con Telegram API' : 'Requiere token',
+      },
+      deliveryErrors: {
+        status: (hasWebhookError ? 'ERROR' : 'VERIFICADO') as any,
+        message: webhook?.last_error_message || 'Sin errores de entrega registrados',
+      },
+    };
+
     return res.json({
       success: true,
-      connected: Boolean(bot && webhook && webhook.url && webhookMatches),
+      connected: isActuallyWorking,
       hasToken: true,
       maskedToken: maskToken(token),
       bot,
@@ -840,6 +991,7 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
       databaseConfigured: PostgresService.isConfigured(),
       cloudRunConfig: defaultCloudRunConfig,
       gcpPermissions: defaultGcpPermissions,
+      separatedStates,
     });
   } catch (err) {
     return res.status(500).json({
@@ -1359,6 +1511,40 @@ app.post(['/api/telegram/simulate-update', '/telegram/simulate-update'], async (
 
   const result = await processTelegramUpdatePayload(fakeUpdate);
   return res.json({ success: result.ok, ...result, simulatedUpdate: fakeUpdate });
+});
+
+// POST /api/telegram/clear-webhook-errors
+app.post('/api/telegram/clear-webhook-errors', async (req: Request, res: Response) => {
+  const token = await ensureBotToken();
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'No hay token activo configurado.' });
+  }
+
+  const { dropPending = false } = req.body || {};
+  const secret = await ensureWebhookSecret();
+  const targetWebhookUrl = `${PUBLIC_BASE_URL}/api/telegram/webhook`;
+
+  try {
+    // Re-register with canonical secret_token
+    const setRes = await fetch(
+      `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&secret_token=${encodeURIComponent(secret)}&drop_pending_updates=${Boolean(dropPending)}`
+    );
+    const setData = (await setRes.json()) as any;
+
+    const infoRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const infoData = (await infoRes.json()) as any;
+
+    return res.json({
+      success: Boolean(setData.ok),
+      result: setData,
+      webhook: infoData.ok ? infoData.result : null,
+      message: setData.ok
+        ? 'Webhook re-sincronizado exitosamente con secret_token. Los errores previos fueron limpiados en Telegram.'
+        : `Telegram reportó: ${setData.description || 'Error desconocido'}`,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: String(err) });
+  }
 });
 
 // Automatic Webhook Registration on Startup

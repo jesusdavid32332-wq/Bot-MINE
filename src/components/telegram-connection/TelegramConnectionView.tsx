@@ -297,6 +297,31 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
     }
   };
 
+  // Clear webhook errors and re-sync
+  const handleClearWebhookErrors = async (dropPending = false) => {
+    setIsSettingWebhook(true);
+    setErrorMessage(null);
+    setSuccessNotice(null);
+    try {
+      const { res, data } = await safeFetchJson('/api/telegram/clear-webhook-errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dropPending }),
+      });
+      if (res.ok && data?.success) {
+        setSuccessNotice(data.message || 'Webhook re-sincronizado exitosamente.');
+        await loadStatus();
+        await runDiagnose();
+      } else {
+        setErrorMessage(safeText(data?.error, 'Error limpiando errores del webhook'));
+      }
+    } catch (err) {
+      setErrorMessage('Error al limpiar errores del webhook: ' + (err instanceof Error ? err.message : safeText(err)));
+    } finally {
+      setIsSettingWebhook(false);
+    }
+  };
+
   const isConnected = Boolean(status?.connected);
   const hasToken = Boolean(status?.hasToken);
 
@@ -577,9 +602,14 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
               {/* Metrics Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div className="p-3 rounded-xl bg-[#030712] border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Actualizaciones pendientes</span>
-                  <span className="font-mono text-base font-bold text-white">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Actualizaciones en Cola</span>
+                  <span className="font-mono text-base font-bold text-white flex items-center gap-2">
                     {status?.webhook?.pending_update_count ?? 0}
+                    {(status?.webhook?.pending_update_count ?? 0) > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-normal bg-amber-500/20 text-amber-300">
+                        En espera
+                      </span>
+                    )}
                   </span>
                 </div>
 
@@ -598,7 +628,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                   <span className="text-[10px] text-slate-400 uppercase font-mono block">Último error Telegram</span>
                   <span
                     className={`font-mono text-xs truncate block ${
-                      status?.webhook?.last_error_message ? 'text-red-400' : 'text-slate-400'
+                      status?.webhook?.last_error_message ? 'text-red-400 font-bold' : 'text-slate-400'
                     }`}
                     title={safeText(status?.webhook?.last_error_message)}
                   >
@@ -606,6 +636,84 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Alert on 401 Unauthorized or Pending Updates */}
+              {status?.webhook?.last_error_message?.includes('401') && (
+                <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-500/40 space-y-2">
+                  <div className="flex items-center gap-2 text-red-300 font-semibold text-xs">
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    <span>Bloqueo Activo en Cloud Run: 401 Unauthorized</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Telegram envió actualizaciones al endpoint pero el contenedor de Cloud Run las rechazó con HTTP 401. Esto sucede porque el contenedor en Cloud Run no tiene sincronizada la variable de entorno <code className="font-mono text-cyan-300">WEBHOOK_SECRET=jc_mines_webhook_secret_9981</code>.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      onClick={() => handleClearWebhookErrors(false)}
+                      disabled={isSettingWebhook}
+                      className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSettingWebhook ? 'animate-spin' : ''}`} />
+                      Re-sincronizar Secret Token Oficial
+                    </button>
+                    {(status?.webhook?.pending_update_count ?? 0) > 0 && (
+                      <button
+                        onClick={() => handleClearWebhookErrors(true)}
+                        disabled={isSettingWebhook}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs flex items-center gap-1.5 cursor-pointer"
+                        title="Descarta actualizaciones atoradas antiguas si causan bucles"
+                      >
+                        Limpiar cola de Telegram (Drop)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 7 Separated States Audit Breakdown */}
+              {status?.separatedStates && (
+                <div className="p-4 rounded-xl bg-[#030712] border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                      Desglose de los 7 Estados de Conexión
+                    </span>
+                    <span className="text-[9px] font-mono text-cyan-400">Auditoría Separada</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 text-xs">
+                    {Object.entries({
+                      '1. Token Autenticado': status.separatedStates.tokenAuthenticated,
+                      '2. Webhook Registrado': status.separatedStates.webhookRegistered,
+                      '3. Webhook Accesible': status.separatedStates.webhookAccessible,
+                      '4. Actualizaciones Recibidas': status.separatedStates.updatesReceived,
+                      '5. Actualizaciones Procesadas': status.separatedStates.updatesProcessed,
+                      '6. Mensajes Enviados': status.separatedStates.messagesSentSuccessfully,
+                      '7. Errores de Entrega': status.separatedStates.deliveryErrors,
+                    }).map(([label, info]) => {
+                      const badge = info.status;
+                      const badgeClasses =
+                        badge === 'VERIFICADO'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : badge === 'ERROR'
+                          ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                          : badge === 'REQUIERE_AUTORIZACION'
+                          ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+                          : 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+
+                      return (
+                        <div key={label} className="p-2.5 rounded-lg bg-[#02050e] border border-slate-800 flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-white font-medium text-[11px] block">{label}</span>
+                            <span className="text-slate-400 text-[10px] block truncate">{info.message}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border shrink-0 ${badgeClasses}`}>
+                            {badge}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

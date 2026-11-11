@@ -37,7 +37,9 @@ Quiero mostrarte cómo funciona nuestro sistema de información y análisis del 
 Primero quiero conocerte un poquito.
 
 *¿De qué país nos escribes?* 🌎`,
-    contentType: 'text_buttons',
+    contentType: 'photo_buttons',
+    mediaUrl: '/public/assets/aistudio/IMG_7992_53256945.jpeg',
+    mediaType: 'photo',
     buttons: [
       { id: 'btn-co', text: '🇨🇴 Colombia', type: 'callback', value: 'pais_colombia' },
       { id: 'btn-otro', text: '🌎 Otro país', type: 'callback', value: 'pais_otro' },
