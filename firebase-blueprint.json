@@ -1,0 +1,170 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Telegram user interacting with Juan Carlos | Mines AI bot",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique user ID" },
+        "telegramId": { "type": "string", "description": "Telegram user ID" },
+        "name": { "type": "string", "description": "User full name or display name" },
+        "username": { "type": "string", "description": "Telegram @username" },
+        "country": { "type": "string", "description": "Declared country" },
+        "declaredCountry": { "type": "string", "description": "Declared country" },
+        "currentStep": { "type": "string", "description": "Current flow step in deterministic state machine" },
+        "stage": { "type": "string", "description": "Readable stage name" },
+        "lastActivity": { "type": "string", "description": "ISO timestamp of last interaction" },
+        "status": { "type": "string", "description": "Activity status: active, waiting_reply, completed, paused" },
+        "messagesSent": { "type": "number", "description": "Count of bot messages sent to user" },
+        "messagesReceived": { "type": "number", "description": "Count of user messages received" },
+        "experienceLevel": { "type": "string", "description": "principiante, experimentado, desconocido" },
+        "accountId": { "type": "string", "description": "1xBet numeric account ID" },
+        "accountStatus": { "type": "string", "description": "id_recibido, pendiente_revision, revisado, no_verificable" },
+        "consentGiven": { "type": "boolean", "description": "Whether user consented to step flow" },
+        "notes": { "type": "string", "description": "Admin review notes" },
+        "joinDate": { "type": "string", "description": "ISO timestamp when first seen" }
+      },
+      "required": ["telegramId", "name", "currentStep", "accountStatus"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Automatic sequenced message template configured for Telegram flow",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Message ID" },
+        "stepId": { "type": "string", "description": "Flow step identifier" },
+        "internalName": { "type": "string", "description": "Internal name for admin identification" },
+        "text": { "type": "string", "description": "Message text delivered on Telegram" },
+        "contentType": { "type": "string", "description": "text, photo_caption, video_caption, text_buttons, photo_buttons, video_buttons, photo_group" },
+        "mediaUrl": { "type": "string", "description": "Associated image or video URL" },
+        "mediaType": { "type": "string", "description": "photo or video" },
+        "additionalMediaUrls": { "type": "array", "description": "Array of additional media for albums" },
+        "buttons": { "type": "array", "description": "Inline keyboard buttons" },
+        "condition": { "type": "string", "description": "Trigger condition description" },
+        "nextStepId": { "type": "string", "description": "Next flow step or END" },
+        "isActive": { "type": "boolean", "description": "Whether this template is enabled" },
+        "order": { "type": "number", "description": "Sequence order index" },
+        "stageTag": { "type": "string", "description": "Category or stage tag" }
+      },
+      "required": ["stepId", "internalName", "text", "order", "isActive"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Conversation container and messages for a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Telegram user ID" },
+        "status": { "type": "string", "description": "waiting_response, attended, automated" },
+        "lastMessageTime": { "type": "string", "description": "Timestamp of last message" },
+        "currentStep": { "type": "string", "description": "Current step in flow" },
+        "messages": { "type": "array", "description": "History of messages" }
+      },
+      "required": ["userId", "status", "currentStep"]
+    },
+    "Flow": {
+      "title": "Flow",
+      "description": "Flow step node configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Step ID" },
+        "name": { "type": "string", "description": "Step label" },
+        "category": { "type": "string", "description": "Step category" },
+        "trigger": { "type": "string", "description": "Trigger condition" },
+        "expectedInput": { "type": "string", "description": "Expected input pattern" },
+        "destination": { "type": "string", "description": "Destination step" },
+        "hasMedia": { "type": "string", "description": "photo, video, photo_group" }
+      },
+      "required": ["id", "name", "category"]
+    },
+    "Condition": {
+      "title": "Condition",
+      "description": "Deterministic keyword dictionary configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Configuration key (e.g. default)" },
+        "keywordsYes": { "type": "array", "description": "Affirmative keywords" },
+        "keywordsNo": { "type": "array", "description": "Negative keywords" },
+        "keywordsColombia": { "type": "array", "description": "Colombia keywords" },
+        "keywordsOtherCountry": { "type": "array", "description": "Other country keywords" },
+        "keywordsWantMore": { "type": "array", "description": "Learn more keywords" },
+        "keywordsNotNow": { "type": "array", "description": "Not now keywords" },
+        "keywordsNeedHelp": { "type": "array", "description": "Need help finding ID keywords" },
+        "keywordsAlreadyFoundId": { "type": "array", "description": "Already found ID keywords" },
+        "idRegex": { "type": "string", "description": "Regex for numeric account ID" },
+        "unrecognizedFallbackText": { "type": "string", "description": "Fallback response message" }
+      },
+      "required": ["id", "idRegex"]
+    },
+    "Media": {
+      "title": "Media",
+      "description": "Media asset item associated with messages or tutorials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Media identifier" },
+        "name": { "type": "string", "description": "File name" },
+        "type": { "type": "string", "description": "photo or video" },
+        "url": { "type": "string", "description": "Public URL or local path" },
+        "description": { "type": "string", "description": "Media description" },
+        "sizeBytes": { "type": "number", "description": "File size in bytes" },
+        "associatedStep": { "type": "string", "description": "Associated flow step" },
+        "isRealAsset": { "type": "boolean", "description": "Whether it is a verified real asset" }
+      },
+      "required": ["id", "name", "type", "url"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Application settings (botConfig, generalConfig)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Setting ID: bot_config or general_config" },
+        "data": { "type": "object", "description": "Arbitrary settings map" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["id"]
+    },
+    "ProcessedUpdate": {
+      "title": "ProcessedUpdate",
+      "description": "Telegram update_id record for strict deduplication and idempotency",
+      "type": "object",
+      "properties": {
+        "updateId": { "type": "number", "description": "Telegram numeric update_id" },
+        "processedAt": { "type": "string", "description": "ISO timestamp when processed" }
+      },
+      "required": ["updateId", "processedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of Telegram bot users"
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Collection of automatic sequenced messages"
+    },
+    "/conversations/{userId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Collection of user chat histories"
+    },
+    "/flows/{flowId}": {
+      "schema": { "$ref": "#/entities/Flow" },
+      "description": "Collection of flow node steps"
+    },
+    "/conditions/{conditionId}": {
+      "schema": { "$ref": "#/entities/Condition" },
+      "description": "Collection of deterministic keyword conditions"
+    },
+    "/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/Media" },
+      "description": "Collection of media assets"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Setting" },
+      "description": "Collection of bot and general settings"
+    },
+    "/processed_updates/{updateId}": {
+      "schema": { "$ref": "#/entities/ProcessedUpdate" },
+      "description": "Collection of processed Telegram update IDs for idempotency"
+    }
+  }
+}

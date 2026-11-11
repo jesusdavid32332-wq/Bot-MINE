@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net - Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Users collection: Telegram bot users & registration statuses
+    match /users/{userId} {
+      allow read, write: if isValidId(userId);
+    }
+
+    // Messages collection: Sequenced message templates
+    match /messages/{messageId} {
+      allow read, write: if isValidId(messageId);
+    }
+
+    // Conversations collection: Chat histories
+    match /conversations/{userId} {
+      allow read, write: if isValidId(userId);
+      match /messages/{msgId} {
+        allow read, write: if isValidId(msgId);
+      }
+    }
+
+    // Flows collection: Step configuration nodes
+    match /flows/{flowId} {
+      allow read, write: if isValidId(flowId);
+    }
+
+    // Conditions collection: Keyword dictionaries
+    match /conditions/{conditionId} {
+      allow read, write: if isValidId(conditionId);
+    }
+
+    // Media collection: Photos and videos
+    match /media/{mediaId} {
+      allow read, write: if isValidId(mediaId);
+    }
+
+    // Settings collection: Bot config and general config
+    match /settings/{settingId} {
+      allow read, write: if isValidId(settingId);
+    }
+
+    // Processed updates collection: Telegram update_id deduplication
+    match /processed_updates/{updateId} {
+      allow read, write: if isValidId(updateId);
+    }
+
+    // Test connection doc
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

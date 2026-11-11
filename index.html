@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Ignore HMR WebSocket connection errors in iFrame sandbox per environment instructions
+      window.addEventListener('unhandledrejection', function (event) {
+        if (
+          event.reason &&
+          (event.reason.message?.includes('WebSocket') ||
+            event.reason.message?.includes('ws') ||
+            String(event.reason?.stack).includes('@vite/client'))
+        ) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener('error', function (event) {
+        if (
+          event.message?.includes('WebSocket') ||
+          String(event.filename).includes('@vite/client')
+        ) {
+          event.preventDefault();
+        }
+      });
+    </script>
+    <title>Juan Carlos | Mines AI 💎 — Panel de Administración</title>
+    <meta name="description" content="Panel de administración y control integral para el bot de Telegram Juan Carlos | Mines AI 💎: gestión de mensajes automáticos, flujos condicionales de conversación, IA Gemini, tutoriales, biblioteca multimedia, usuarios y enlaces." />
+    <meta property="og:title" content="Juan Carlos | Mines AI 💎 — Panel de Administración" />
+    <meta property="og:description" content="Panel de administración y control integral para el bot de Telegram Juan Carlos | Mines AI 💎." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-[#030712] text-slate-100 antialiased selection:bg-amber-500/20 selection:text-amber-300 min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

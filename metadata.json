@@ -1,0 +1,6 @@
+{
+  "name": "Juan Carlos | Mines AI 💎 — Panel de Administración",
+  "description": "Panel de administración y control integral para el bot de Telegram Juan Carlos | Mines AI 💎: gestión de mensajes automáticos, flujos condicionales de conversación, IA Gemini, tutoriales, biblioteca multimedia, usuarios y enlaces.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

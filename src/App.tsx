@@ -1,0 +1,293 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { AccountVerificationStatus, SectionId, TelegramUser } from './types';
+import { StorageService } from './services/storage';
+import { FirestoreService } from './services/firestoreService';
+
+// Layout Components
+import { Sidebar } from './components/layout/Sidebar';
+import { Header } from './components/layout/Header';
+import { BotChatSimulatorModal } from './components/ui/BotChatSimulatorModal';
+
+// Section Views
+import { DashboardView } from './components/dashboard/DashboardView';
+import { MessagesView } from './components/messages/MessagesView';
+import { FlowView } from './components/flow/FlowView';
+import { AccountVerificationView } from './components/id-tracking/AccountVerificationView';
+import { TelegramAdminMenuView } from './components/admin-telegram/TelegramAdminMenuView';
+import { MediaView } from './components/media/MediaView';
+import { TutorialsView } from './components/tutorials/TutorialsView';
+import { UsersView } from './components/users/UsersView';
+import { ConversationsView } from './components/conversations/ConversationsView';
+import { SupportView } from './components/support/SupportView';
+import { LinksView } from './components/links/LinksView';
+import { BotConfigView } from './components/bot-config/BotConfigView';
+import { GeneralConfigView } from './components/general-config/GeneralConfigView';
+
+export default function App() {
+  const [currentSection, setCurrentSection] = useState<SectionId>('dashboard');
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
+  const [selectedUserIdForChat, setSelectedUserIdForChat] = useState<string | undefined>(undefined);
+
+  // Core Data States loaded from StorageService
+  const [botConfig, setBotConfig] = useState(StorageService.getBotConfig());
+  const [keywordConfig, setKeywordConfig] = useState(StorageService.getKeywordConfig());
+  const [messages, setMessages] = useState(StorageService.getMessages());
+  const [mediaItems, setMediaItems] = useState(StorageService.getMediaItems());
+  const [tutorials, setTutorials] = useState(StorageService.getTutorials());
+  const [users, setUsers] = useState(StorageService.getUsers());
+  const [conversations, setConversations] = useState(StorageService.getConversations());
+  const [supportTickets, setSupportTickets] = useState(StorageService.getSupportTickets());
+  const [trackedLinks, setTrackedLinks] = useState(StorageService.getTrackedLinks());
+  const [generalConfig, setGeneralConfig] = useState(StorageService.getGeneralConfig());
+
+  // Connect Real-Time Subscriptions to Cloud Firestore
+  useEffect(() => {
+    // 1. Initialize Firestore collections if empty
+    FirestoreService.initializeDatabaseIfEmpty();
+
+    // 2. Attach real-time listeners for live sync across bot and admin panel
+    const unsubUsers = FirestoreService.subscribeUsers((updatedUsers) => {
+      setUsers(updatedUsers);
+    });
+
+    const unsubMessages = FirestoreService.subscribeMessages((updatedMessages) => {
+      setMessages(updatedMessages);
+    });
+
+    const unsubMedia = FirestoreService.subscribeMedia((updatedMedia) => {
+      setMediaItems(updatedMedia);
+    });
+
+    const unsubConditions = FirestoreService.subscribeConditions((updatedConditions) => {
+      setKeywordConfig(updatedConditions);
+    });
+
+    const unsubBotConfig = FirestoreService.subscribeBotConfig((updatedConfig) => {
+      setBotConfig(updatedConfig);
+    });
+
+    const unsubGeneralConfig = FirestoreService.subscribeGeneralConfig((updatedGeneral) => {
+      setGeneralConfig(updatedGeneral);
+    });
+
+    const unsubConvs = FirestoreService.subscribeConversations((updatedConvs) => {
+      setConversations(updatedConvs);
+    });
+
+    return () => {
+      unsubUsers();
+      unsubMessages();
+      unsubMedia();
+      unsubConditions();
+      unsubBotConfig();
+      unsubGeneralConfig();
+      unsubConvs();
+    };
+  }, []);
+
+  // Reload all from storage if reset
+  const handleReloadAll = () => {
+    StorageService.resetAllToDemo();
+    setBotConfig(StorageService.getBotConfig());
+    setKeywordConfig(StorageService.getKeywordConfig());
+    setMessages(StorageService.getMessages());
+    setMediaItems(StorageService.getMediaItems());
+    setTutorials(StorageService.getTutorials());
+    setUsers(StorageService.getUsers());
+    setConversations(StorageService.getConversations());
+    setSupportTickets(StorageService.getSupportTickets());
+    setTrackedLinks(StorageService.getTrackedLinks());
+    setGeneralConfig(StorageService.getGeneralConfig());
+  };
+
+  // Update Account Verification Status
+  const handleUpdateUserVerificationStatus = (
+    telegramId: string,
+    status: AccountVerificationStatus,
+    notes?: string
+  ) => {
+    const updated = users.map((u) =>
+      u.telegramId === telegramId ? { ...u, accountStatus: status, notes: notes ?? u.notes } : u
+    );
+    setUsers(updated);
+    StorageService.saveUsers(updated);
+    FirestoreService.updateUserStatus(telegramId, status, notes).catch(console.warn);
+  };
+
+  // Select user and jump to conversation
+  const handleSelectUserForInspection = (user: TelegramUser) => {
+    setSelectedUserIdForChat(user.id);
+    setCurrentSection('conversations');
+  };
+
+  return (
+    <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans">
+      {/* Main Administrative Layout with Sidebar */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar Navigation */}
+        <Sidebar
+          currentSection={currentSection}
+          onSelectSection={(sec) => setCurrentSection(sec)}
+          isMobileOpen={isMobileOpen}
+          onCloseMobile={() => setIsMobileOpen(false)}
+          usersCount={users.length}
+          messagesCount={messages.length}
+          trackedIdsCount={users.filter((u) => Boolean(u.accountId)).length}
+        />
+
+        {/* Content Viewport */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+          {/* Header Bar */}
+          <Header
+            currentSection={currentSection}
+            onOpenMobile={() => setIsMobileOpen(true)}
+            onOpenSimulator={() => setIsSimulatorOpen(true)}
+          />
+
+          {/* Page Body Viewport */}
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+            {currentSection === 'dashboard' && (
+              <DashboardView
+                users={users}
+                onSelectUser={handleSelectUserForInspection}
+                onNavigateSection={(sec) => setCurrentSection(sec)}
+                onOpenSimulator={() => setIsSimulatorOpen(true)}
+              />
+            )}
+
+            {currentSection === 'messages' && (
+              <MessagesView
+                messages={messages}
+                mediaItems={mediaItems}
+                onSaveMessages={(updated) => {
+                  setMessages(updated);
+                  StorageService.saveMessages(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'flow' && <FlowView />}
+
+            {currentSection === 'id-tracking' && (
+              <AccountVerificationView
+                users={users}
+                onUpdateUserStatus={handleUpdateUserVerificationStatus}
+              />
+            )}
+
+            {currentSection === 'admin-telegram' && (
+              <TelegramAdminMenuView
+                botConfig={botConfig}
+                keywordConfig={keywordConfig}
+                users={users}
+                onSaveBotConfig={(updated) => {
+                  setBotConfig(updated);
+                  StorageService.saveBotConfig(updated);
+                }}
+                onSaveKeywordConfig={(updated) => {
+                  setKeywordConfig(updated);
+                  StorageService.saveKeywordConfig(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'media' && (
+              <MediaView
+                mediaItems={mediaItems}
+                onSaveMedia={(updated) => {
+                  setMediaItems(updated);
+                  StorageService.saveMediaItems(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'tutorials' && (
+              <TutorialsView
+                tutorials={tutorials}
+                mediaItems={mediaItems}
+                onSaveTutorials={(updated) => {
+                  setTutorials(updated);
+                  StorageService.saveTutorials(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'users' && (
+              <UsersView
+                users={users}
+                conversations={conversations}
+                onSelectUserForChat={handleSelectUserForInspection}
+              />
+            )}
+
+            {currentSection === 'conversations' && (
+              <ConversationsView
+                users={users}
+                conversations={conversations}
+                onSaveConversations={(updated) => {
+                  setConversations(updated);
+                  StorageService.saveConversations(updated);
+                }}
+                initialSelectedUserId={selectedUserIdForChat}
+              />
+            )}
+
+            {currentSection === 'support' && (
+              <SupportView
+                tickets={supportTickets}
+                onSaveTickets={(updated) => {
+                  setSupportTickets(updated);
+                  StorageService.saveSupportTickets(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'links' && (
+              <LinksView
+                links={trackedLinks}
+                onSaveLinks={(updated) => {
+                  setTrackedLinks(updated);
+                  StorageService.saveTrackedLinks(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'bot-config' && (
+              <BotConfigView
+                config={botConfig}
+                onSaveConfig={(updated) => {
+                  setBotConfig(updated);
+                  StorageService.saveBotConfig(updated);
+                }}
+              />
+            )}
+
+            {currentSection === 'general-config' && (
+              <GeneralConfigView
+                config={generalConfig}
+                onSaveConfig={(updated) => {
+                  setGeneralConfig(updated);
+                  StorageService.saveGeneralConfig(updated);
+                }}
+                onResetAllDemoData={handleReloadAll}
+              />
+            )}
+          </main>
+        </div>
+      </div>
+
+      {/* Global Interactive Bot Chat Simulator Modal */}
+      <BotChatSimulatorModal
+        isOpen={isSimulatorOpen}
+        onClose={() => setIsSimulatorOpen(false)}
+        messages={messages}
+      />
+    </div>
+  );
+}
