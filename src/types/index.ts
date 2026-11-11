@@ -265,12 +265,12 @@ export interface TelegramConnectionStatus {
   publicBaseUrl?: string;
   publicBaseUrlConfigured: boolean;
   webhookSecretConfigured: boolean;
-  cloudRunConfig: {
+  cloudRunConfig?: {
     serviceName: string;
     region: string;
     projectId: string;
   };
-  gcpPermissions: {
+  gcpPermissions?: {
     hasSecretManagerPermission: boolean;
     hasCloudRunPermission: boolean;
     errorMessage?: string;

@@ -628,6 +628,25 @@ app.post('/api/users/:telegramId/review', async (req, res) => {
 // ----------------------------------------------------
 // 3. TELEGRAM BOT REAL CONNECTION & LIFECYCLE ENDPOINTS
 // ----------------------------------------------------
+const defaultCloudRunConfig = {
+  serviceName: process.env.K_SERVICE || 'mine-aimbot',
+  region: process.env.REGION || 'us-west2',
+  projectId: process.env.GOOGLE_CLOUD_PROJECT || 'jumping-agility-75wls',
+};
+
+const defaultGcpPermissions = {
+  hasSecretManagerPermission: false,
+  hasCloudRunPermission: true,
+  errorMessage: 'La cuenta de servicio del contenedor opera con roles de ejecución Cloud Run.',
+  requiredRoles: [
+    'roles/secretmanager.secretAccessor',
+    'roles/run.invoker',
+  ],
+  gcloudCommands: [
+    'gcloud run services update mine-aimbot --region us-west2 --update-secrets=TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest',
+  ],
+};
+
 app.get('/api/telegram/connection-status', async (_req, res) => {
   const token = getActiveBotToken();
   const publicBaseUrl = PUBLIC_BASE_URL;
@@ -648,6 +667,8 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
       webhookSecretConfigured: Boolean(currentWebhookSecret),
       databaseType: 'neon-postgresql',
       databaseConfigured: PostgresService.isConfigured(),
+      cloudRunConfig: defaultCloudRunConfig,
+      gcpPermissions: defaultGcpPermissions,
     });
   }
 
@@ -675,6 +696,8 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
         publicBaseUrlConfigured: Boolean(publicBaseUrl),
         webhookSecretConfigured: Boolean(currentWebhookSecret),
         databaseType: 'neon-postgresql',
+        cloudRunConfig: defaultCloudRunConfig,
+        gcpPermissions: defaultGcpPermissions,
       });
     }
 
@@ -702,6 +725,8 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
       webhookSecretConfigured: Boolean(currentWebhookSecret),
       databaseType: 'neon-postgresql',
       databaseConfigured: PostgresService.isConfigured(),
+      cloudRunConfig: defaultCloudRunConfig,
+      gcpPermissions: defaultGcpPermissions,
     });
   } catch (err) {
     return res.status(500).json({
@@ -709,6 +734,8 @@ app.get('/api/telegram/connection-status', async (_req, res) => {
       error: 'Error consultando Telegram API: ' + (err instanceof Error ? err.message : String(err)),
       hasToken: true,
       maskedToken: maskToken(token),
+      cloudRunConfig: defaultCloudRunConfig,
+      gcpPermissions: defaultGcpPermissions,
     });
   }
 });
@@ -840,6 +867,8 @@ app.post('/api/telegram/connect', async (req, res) => {
       webhookNotice,
       maskedToken: maskToken(cleanToken),
       publicBaseUrl,
+      cloudRunConfig: defaultCloudRunConfig,
+      gcpPermissions: defaultGcpPermissions,
     });
   } catch (err) {
     return res.status(500).json({
@@ -1238,6 +1267,23 @@ const isServerless = Boolean(
 );
 
 if (!isServerless) {
+  if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(path.join(rootDir, 'dist')));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(rootDir, 'dist', 'index.html'));
+    });
+  } else {
+    const { createServer } = await import('vite');
+    const vite = await createServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined,
+      },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  }
+
   const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`🚀 [Juan Carlos | Mines AI 💎] Servidor backend escuchando en el puerto ${PORT}`);
     console.log(`📡 Webhook Telegram configurado en: /api/telegram/webhook`);
@@ -1245,24 +1291,6 @@ if (!isServerless) {
   });
 
   syncWebhookOnStartup().catch((e) => console.warn('[Startup Webhook] Error:', e));
-
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.join(rootDir, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(rootDir, 'dist', 'index.html'));
-    });
-  } else {
-    import('vite').then(async ({ createServer }) => {
-      const vite = await createServer({
-        server: {
-          middlewareMode: true,
-          hmr: { server },
-        },
-        appType: 'spa',
-      });
-      app.use(vite.middlewares);
-    });
-  }
 }
 
 export default app;

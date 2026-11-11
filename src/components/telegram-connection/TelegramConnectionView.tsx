@@ -919,10 +919,10 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                 <span className="text-[10px] text-slate-400 uppercase font-mono block">Servicio Cloud Run</span>
                 <div className="flex items-center justify-between">
                   <code className="text-white font-mono font-bold">
-                    {status?.cloudRunConfig.serviceName || 'mine-aimbot'}
+                    {status?.cloudRunConfig?.serviceName || 'mine-aimbot'}
                   </code>
                   <span className="font-mono text-[10px] text-slate-400">
-                    Región: <strong className="text-slate-200">{status?.cloudRunConfig.region || 'us-west2'}</strong>
+                    Región: <strong className="text-slate-200">{status?.cloudRunConfig?.region || 'us-west2'}</strong>
                   </span>
                 </div>
               </div>
@@ -935,12 +935,12 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                   </span>
                   <span
                     className={`font-mono text-[9px] px-2 py-0.5 rounded font-bold ${
-                      status?.gcpPermissions.hasSecretManagerPermission
+                      status?.gcpPermissions?.hasSecretManagerPermission
                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                         : 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
                     }`}
                   >
-                    {status?.gcpPermissions.hasSecretManagerPermission
+                    {status?.gcpPermissions?.hasSecretManagerPermission
                       ? 'CONECTADO'
                       : 'AUTORIZACIÓN MANUAL REQUERIDA'}
                   </span>
