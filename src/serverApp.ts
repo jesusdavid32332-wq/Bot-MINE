@@ -1229,8 +1229,15 @@ async function syncWebhookOnStartup() {
   }
 }
 
-// In local or Cloud Run, listen on PORT. In Vercel serverless, don't block.
-if (!process.env.VERCEL) {
+// In local or Cloud Run, listen on PORT. In Vercel serverless / AWS Lambda, don't block.
+const isServerless = Boolean(
+  process.env.VERCEL ||
+  process.env.VERCEL_ENV ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT
+);
+
+if (!isServerless) {
   const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`🚀 [Juan Carlos | Mines AI 💎] Servidor backend escuchando en el puerto ${PORT}`);
     console.log(`📡 Webhook Telegram configurado en: /api/telegram/webhook`);

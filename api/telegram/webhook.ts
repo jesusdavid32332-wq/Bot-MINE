@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import app from '../../src/serverApp';
+import app from '../../dist/server.js';
 
 // Vercel Serverless Function Handler for Telegram Webhook
 // POST /api/telegram/webhook
