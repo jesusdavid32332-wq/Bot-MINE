@@ -14,6 +14,7 @@ import {
   Server,
   Terminal,
 } from 'lucide-react';
+import { safeText } from '../../utils/safeText';
 
 interface TelegramConnectionModalProps {
   isOpen: boolean;
@@ -83,7 +84,7 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
       const { json } = await safeFetchJson('/api/telegram/status');
       setData(json);
     } catch (err: any) {
-      setFeedback({ type: 'error', message: `Error comprobando estado: ${err.message}` });
+      setFeedback({ type: 'error', message: `Error comprobando estado: ${safeText(err)}` });
     } finally {
       setIsLoading(false);
     }
@@ -111,11 +112,11 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
       } else {
         setFeedback({
           type: 'error',
-          message: json?.error || 'Error al registrar el webhook en Telegram.',
+          message: safeText(json?.error, 'Error al registrar el webhook en Telegram.'),
         });
       }
     } catch (err: any) {
-      setFeedback({ type: 'error', message: `Fallo de conexión: ${err.message}` });
+      setFeedback({ type: 'error', message: `Fallo de conexión: ${safeText(err)}` });
     } finally {
       setIsRegistering(false);
     }
@@ -138,11 +139,11 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
       } else {
         setFeedback({
           type: 'error',
-          message: json?.error || 'Error enviando mensaje de prueba.',
+          message: safeText(json?.error, 'Error enviando mensaje de prueba.'),
         });
       }
     } catch (err: any) {
-      setFeedback({ type: 'error', message: `Fallo al enviar mensaje: ${err.message}` });
+      setFeedback({ type: 'error', message: `Fallo al enviar mensaje: ${safeText(err)}` });
     } finally {
       setIsSendingTest(false);
     }
@@ -231,7 +232,7 @@ export const TelegramConnectionModal: React.FC<TelegramConnectionModalProps> = (
               {feedback.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />}
               {feedback.type === 'error' && <XCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />}
               {feedback.type === 'info' && <AlertTriangle className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />}
-              <div className="flex-1">{feedback.message}</div>
+              <div className="flex-1">{safeText(feedback.message)}</div>
             </div>
           )}
 

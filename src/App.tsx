@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { AccountVerificationStatus, SectionId, TelegramUser } from './types';
 import { StorageService } from './services/storage';
 import { DataService } from './services/dataService';
+import { isErrorObject, safeText, sanitizeUsers, sanitizeConversations } from './utils/safeText';
 
 // Layout Components
 import { Sidebar } from './components/layout/Sidebar';
@@ -73,26 +74,26 @@ export default function App() {
 
         if (!isMounted) return;
 
-        if (remoteUsers.status === 'fulfilled' && remoteUsers.value.length > 0) {
-          setUsers(remoteUsers.value);
+        if (remoteUsers.status === 'fulfilled' && Array.isArray(remoteUsers.value) && !isErrorObject(remoteUsers.value)) {
+          setUsers(sanitizeUsers(remoteUsers.value));
         }
-        if (remoteMessages.status === 'fulfilled' && remoteMessages.value.length > 0) {
+        if (remoteMessages.status === 'fulfilled' && Array.isArray(remoteMessages.value) && !isErrorObject(remoteMessages.value) && remoteMessages.value.length > 0) {
           setMessages(remoteMessages.value);
         }
-        if (remoteMedia.status === 'fulfilled' && remoteMedia.value.length > 0) {
+        if (remoteMedia.status === 'fulfilled' && Array.isArray(remoteMedia.value) && !isErrorObject(remoteMedia.value) && remoteMedia.value.length > 0) {
           setMediaItems(remoteMedia.value);
         }
-        if (remoteConditions.status === 'fulfilled') {
+        if (remoteConditions.status === 'fulfilled' && remoteConditions.value && !isErrorObject(remoteConditions.value)) {
           setKeywordConfig((prev) => ({ ...prev, ...remoteConditions.value }));
         }
-        if (remoteBotConfig.status === 'fulfilled') {
+        if (remoteBotConfig.status === 'fulfilled' && remoteBotConfig.value && !isErrorObject(remoteBotConfig.value)) {
           setBotConfig((prev) => ({ ...prev, ...remoteBotConfig.value }));
         }
-        if (remoteGeneralConfig.status === 'fulfilled') {
+        if (remoteGeneralConfig.status === 'fulfilled' && remoteGeneralConfig.value && !isErrorObject(remoteGeneralConfig.value)) {
           setGeneralConfig((prev) => ({ ...prev, ...remoteGeneralConfig.value }));
         }
-        if (remoteConvs.status === 'fulfilled' && Object.keys(remoteConvs.value).length > 0) {
-          setConversations(remoteConvs.value);
+        if (remoteConvs.status === 'fulfilled' && remoteConvs.value && !isErrorObject(remoteConvs.value) && Object.keys(remoteConvs.value).length > 0) {
+          setConversations(sanitizeConversations(remoteConvs.value));
         }
       } catch (err) {
         console.warn('[App] Error sincronizando con base de datos Neon:', err);
@@ -129,12 +130,13 @@ export default function App() {
     status: AccountVerificationStatus,
     notes?: string
   ) => {
+    const cleanNotes = notes !== undefined ? safeText(notes) : undefined;
     const updated = users.map((u) =>
-      u.telegramId === telegramId ? { ...u, accountStatus: status, notes: notes ?? u.notes } : u
+      u.telegramId === telegramId ? { ...u, accountStatus: status, notes: cleanNotes !== undefined ? cleanNotes : u.notes } : u
     );
     setUsers(updated);
     StorageService.saveUsers(updated);
-    DataService.updateUserStatus(telegramId, status, notes).catch(console.warn);
+    DataService.updateUserStatus(telegramId, status, cleanNotes).catch(console.warn);
   };
 
   // Select user and jump to conversation

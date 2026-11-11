@@ -17,12 +17,16 @@ import {
   INITIAL_MESSAGES,
 } from './mockData';
 import { DEFAULT_KEYWORD_CONFIG } from './deterministicBotEngine';
+import { isErrorObject, sanitizeConversations, sanitizeUsers } from '../utils/safeText';
 
 async function safeFetch<T>(url: string, options?: RequestInit, fallback?: T): Promise<T> {
   try {
     const res = await fetch(url, options);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (isErrorObject(data)) {
+      throw new Error((data as any).message || 'Error recibido de API');
+    }
     return data;
   } catch (err) {
     if (fallback !== undefined) return fallback;
@@ -34,8 +38,11 @@ export const DataService = {
   // USERS
   async getUsers(): Promise<TelegramUser[]> {
     try {
-      const res = await safeFetch<{ success: boolean; users: TelegramUser[] }>('/api/users');
-      return res.users || [];
+      const res = await safeFetch<{ success: boolean; users?: TelegramUser[] }>('/api/users');
+      if (res && Array.isArray(res.users)) {
+        return sanitizeUsers(res.users);
+      }
+      return [];
     } catch {
       return [];
     }
@@ -134,8 +141,11 @@ export const DataService = {
   // BOT CONFIG
   async getBotConfig(): Promise<BotConfig> {
     try {
-      const res = await safeFetch<{ success: boolean; config: BotConfig }>('/api/bot-config');
-      return res.config || INITIAL_BOT_CONFIG;
+      const res = await safeFetch<{ success: boolean; config?: BotConfig }>('/api/bot-config');
+      if (res && res.config && !isErrorObject(res.config)) {
+        return res.config;
+      }
+      return INITIAL_BOT_CONFIG;
     } catch {
       return INITIAL_BOT_CONFIG;
     }
@@ -156,8 +166,11 @@ export const DataService = {
   // GENERAL CONFIG
   async getGeneralConfig(): Promise<GeneralConfig> {
     try {
-      const res = await safeFetch<{ success: boolean; config: GeneralConfig }>('/api/general-config');
-      return res.config || INITIAL_GENERAL_CONFIG;
+      const res = await safeFetch<{ success: boolean; config?: GeneralConfig }>('/api/general-config');
+      if (res && res.config && !isErrorObject(res.config)) {
+        return res.config;
+      }
+      return INITIAL_GENERAL_CONFIG;
     } catch {
       return INITIAL_GENERAL_CONFIG;
     }
@@ -178,8 +191,11 @@ export const DataService = {
   // CONVERSATIONS
   async getConversations(): Promise<Record<string, UserConversation>> {
     try {
-      const res = await safeFetch<{ success: boolean; conversations: Record<string, UserConversation> }>('/api/conversations');
-      return res.conversations || INITIAL_CONVERSATIONS;
+      const res = await safeFetch<{ success: boolean; conversations?: Record<string, UserConversation> }>('/api/conversations');
+      if (res && res.conversations && !isErrorObject(res.conversations)) {
+        return sanitizeConversations(res.conversations);
+      }
+      return INITIAL_CONVERSATIONS;
     } catch {
       return INITIAL_CONVERSATIONS;
     }

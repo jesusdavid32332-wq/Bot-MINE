@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { TelegramUser, UserConversation } from '../../types';
+import { safeText } from '../../utils/safeText';
 import { Modal } from '../ui/Modal';
 import {
   Users,
@@ -160,27 +161,27 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   >
                     <td className="py-3.5 px-4">
                       <div className="font-bold text-white group-hover:text-amber-300 transition-colors">
-                        {user.name || 'Usuario Telegram'}
+                        {safeText(user.name, 'Usuario Telegram')}
                       </div>
                       <div className="text-[11px] font-mono text-slate-400">
-                        {user.username ? `@${user.username}` : user.telegramId}
+                        {user.username ? `@${safeText(user.username)}` : safeText(user.telegramId)}
                       </div>
                     </td>
 
                     <td className="py-3.5 px-4 font-mono text-slate-300 text-[11px]">
-                      {user.telegramId}
+                      {safeText(user.telegramId)}
                     </td>
 
                     <td className="py-3.5 px-4">
                       <span className="flex items-center gap-1.5 text-slate-200">
                         <MapPin className="w-3.5 h-3.5 text-sky-400" />
-                        {user.country || 'No especificado'}
+                        {safeText(user.country, 'No especificado')}
                       </span>
                     </td>
 
                     <td className="py-3.5 px-4">
                       <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/20">
-                        {user.stage || user.currentStep}
+                        {safeText(user.stage || user.currentStep)}
                       </span>
                     </td>
 
@@ -191,7 +192,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px]">
-                      {user.lastActivity || 'Reciente'}
+                      {safeText(user.lastActivity, 'Reciente')}
                     </td>
 
                     <td className="py-3.5 px-4">
@@ -304,7 +305,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                         </span>
                         <span>{m.timestamp}</span>
                       </div>
-                      <p className="whitespace-pre-wrap">{m.text}</p>
+                      <p className="whitespace-pre-wrap">{safeText(m.text)}</p>
                     </div>
                   ))}
                 </div>

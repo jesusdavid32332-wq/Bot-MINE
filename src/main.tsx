@@ -37,24 +37,52 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
             Juan Carlos | Mines AI — Recuperación de Sistema
           </h1>
           <p className="text-sm text-slate-300 max-w-md mb-4">
-            Se detectó un inconveniente cargando los datos guardados en el navegador. Pulsa el botón para reiniciar el panel con los datos iniciales.
+            Se detectó un inconveniente en la interfaz. Puedes reintentar cargar la aplicación sin perder tus datos o restablecer la caché temporal si persiste.
           </p>
           <div className="p-3 bg-red-950/40 border border-red-500/30 rounded-xl text-xs font-mono text-red-300 mb-4 max-w-lg overflow-auto">
-            {this.state.error?.message || 'Error desconocido'}
+            {typeof this.state.error?.message === 'string'
+              ? this.state.error.message
+              : typeof this.state.error === 'object' && this.state.error !== null
+              ? (this.state.error as any).message || JSON.stringify(this.state.error)
+              : String(this.state.error || 'Error desconocido')}
           </div>
-          <button
-            onClick={() => {
-              try {
-                localStorage.clear();
-              } catch (e) {
-                // ignore
-              }
-              window.location.reload();
-            }}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold bg-sky-500 hover:bg-sky-400 text-white transition-all cursor-pointer shadow-lg shadow-sky-500/20"
-          >
-            Restablecer Panel a Estado Demo Inicial
-          </button>
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <button
+              onClick={() => {
+                this.setState({ hasError: false, error: undefined });
+                window.location.reload();
+              }}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all cursor-pointer shadow-lg shadow-amber-500/20"
+            >
+              Reintentar Recargar
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  // Only remove app storage keys, do not affect unrelated storage
+                  const keysToRemove = [
+                    'mines_ai_bot_config',
+                    'mines_ai_keywords',
+                    'mines_ai_messages',
+                    'mines_ai_media',
+                    'mines_ai_tutorials',
+                    'mines_ai_users',
+                    'mines_ai_conversations',
+                    'mines_ai_support',
+                    'mines_ai_links',
+                    'mines_ai_general_config',
+                  ];
+                  keysToRemove.forEach((k) => localStorage.removeItem(k));
+                } catch (e) {
+                  // ignore
+                }
+                window.location.reload();
+              }}
+              className="px-4 py-2.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all cursor-pointer border border-slate-700"
+            >
+              Restablecer Caché Local
+            </button>
+          </div>
         </div>
       );
     }

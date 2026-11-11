@@ -1,5 +1,6 @@
 import React from 'react';
 import { TelegramUser } from '../../types';
+import { safeText } from '../../utils/safeText';
 import {
   Users,
   UserPlus,
@@ -473,26 +474,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       <td className="py-3 px-3">
                         <div className="font-semibold text-white group-hover:text-amber-300 transition-colors">
-                          {user.name || 'Usuario Telegram'}
+                          {safeText(user.name, 'Usuario Telegram')}
                         </div>
                         <div className="text-[11px] text-slate-400 font-mono">
-                          {user.username ? `@${user.username}` : user.telegramId}
+                          {user.username ? `@${safeText(user.username)}` : safeText(user.telegramId)}
                         </div>
                       </td>
-                      <td className="py-3 px-3 font-mono text-slate-300">{user.telegramId}</td>
+                      <td className="py-3 px-3 font-mono text-slate-300">{safeText(user.telegramId)}</td>
                       <td className="py-3 px-3">
                         <span className="flex items-center gap-1 text-slate-200">
                           <MapPin className="w-3 h-3 text-sky-400" />
-                          {user.country || 'No especificado'}
+                          {safeText(user.country, 'No especificado')}
                         </span>
                       </td>
                       <td className="py-3 px-3">
-                        <span className="text-slate-300 font-mono text-[11px]">{user.currentStep}</span>
+                        <span className="text-slate-300 font-mono text-[11px]">{safeText(user.currentStep)}</span>
                       </td>
                       <td className="py-3 px-3">
                         {user.accountId ? (
                           <span className="px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                            {user.accountId}
+                            {safeText(user.accountId)}
                           </span>
                         ) : (
                           <span className="text-slate-400 text-[11px] italic">Pendiente</span>

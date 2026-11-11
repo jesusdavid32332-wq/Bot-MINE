@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { TelegramConnectionStatus } from '../../types';
 import { TelegramConnectIcon3D } from '../ui/Icons3D';
+import { safeText } from '../../utils/safeText';
 
 interface TelegramConnectionViewProps {
   adminTelegramId?: string;
@@ -91,12 +92,12 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
       if (data && data.success) {
         setStatus(data);
       } else {
-        setErrorMessage(data?.error || 'Error al obtener estado de Telegram');
+        setErrorMessage(safeText(data?.error, 'Error al obtener estado de Telegram'));
       }
     } catch (err) {
       setErrorMessage(
         'Error de comunicación con el servicio: ' +
-          (err instanceof Error ? err.message : String(err))
+          (err instanceof Error ? err.message : safeText(err))
       );
     } finally {
       setIsLoading(false);
@@ -133,10 +134,10 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
         setSuccessNotice(`¡Prueba de /start ejecutada exitosamente! Acción: "${data.action}". Revisa el registro en Conversaciones.`);
         await runDiagnose();
       } else {
-        setErrorMessage(data?.error || 'Fallo al simular /start');
+        setErrorMessage(safeText(data?.error, 'Fallo al simular /start'));
       }
     } catch (err) {
-      setErrorMessage('Error simulando /start: ' + (err instanceof Error ? err.message : String(err)));
+      setErrorMessage('Error simulando /start: ' + (err instanceof Error ? err.message : safeText(err)));
     } finally {
       setIsSimulatingStart(false);
     }
@@ -210,7 +211,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
       });
 
       if (!res.ok || !data.success) {
-        setErrorMessage(data?.error || `Fallo de validación del token (HTTP ${res.status})`);
+        setErrorMessage(safeText(data?.error, `Fallo de validación del token (HTTP ${res.status})`));
         setIsSubmitting(false);
         return;
       }
@@ -239,7 +240,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
     } catch (err) {
       setErrorMessage(
         'Error enviando solicitud de conexión: ' +
-          (err instanceof Error ? err.message : String(err))
+          (err instanceof Error ? err.message : safeText(err))
       );
     } finally {
       setIsSubmitting(false);
@@ -262,10 +263,10 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
         setShowDisconnectModal(false);
         await loadStatus();
       } else {
-        setErrorMessage(data?.error || 'Error al desconectar');
+        setErrorMessage(safeText(data?.error, 'Error al desconectar'));
       }
     } catch (err) {
-      setErrorMessage('Error al desconectar: ' + (err instanceof Error ? err.message : String(err)));
+      setErrorMessage('Error al desconectar: ' + (err instanceof Error ? err.message : safeText(err)));
     } finally {
       setIsDisconnecting(false);
     }
@@ -287,10 +288,10 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
         setSuccessNotice(data.message || 'Webhook sincronizado exitosamente.');
         await loadStatus();
       } else {
-        setErrorMessage(data?.error || 'Error al sincronizar webhook');
+        setErrorMessage(safeText(data?.error, 'Error al sincronizar webhook'));
       }
     } catch (err) {
-      setErrorMessage('Error al sincronizar webhook: ' + (err instanceof Error ? err.message : String(err)));
+      setErrorMessage('Error al sincronizar webhook: ' + (err instanceof Error ? err.message : safeText(err)));
     } finally {
       setIsSettingWebhook(false);
     }
@@ -367,7 +368,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
           <XCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           <div className="flex-1">
             <strong className="font-semibold block mb-0.5">Atención requerida:</strong>
-            <p className="font-mono">{errorMessage}</p>
+            <p className="font-mono">{safeText(errorMessage)}</p>
           </div>
           <button
             onClick={() => setErrorMessage(null)}
@@ -599,9 +600,9 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                     className={`font-mono text-xs truncate block ${
                       status?.webhook?.last_error_message ? 'text-red-400' : 'text-slate-400'
                     }`}
-                    title={status?.webhook?.last_error_message}
+                    title={safeText(status?.webhook?.last_error_message)}
                   >
-                    {status?.webhook?.last_error_message || 'Ninguno (OK)'}
+                    {safeText(status?.webhook?.last_error_message, 'Ninguno (OK)')}
                   </span>
                 </div>
               </div>
@@ -744,7 +745,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                       <div>Actualizaciones en cola de Telegram: <strong>{diagnoseData.check5_updatesSentByTelegram?.pendingUpdateCount ?? 0}</strong></div>
                       {diagnoseData.check5_updatesSentByTelegram?.lastErrorMessage && (
                         <div className="text-red-400 font-mono">
-                          Error de entrega reportado por Telegram: {diagnoseData.check5_updatesSentByTelegram.lastErrorMessage}
+                          Error de entrega reportado por Telegram: {safeText(diagnoseData.check5_updatesSentByTelegram.lastErrorMessage)}
                         </div>
                       )}
                     </div>
@@ -945,15 +946,17 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                   </span>
                 </div>
 
-                {!status?.gcpPermissions.hasSecretManagerPermission && (
+                {!status?.gcpPermissions?.hasSecretManagerPermission && (
                   <div className="p-2.5 rounded-lg bg-amber-950/20 border border-amber-500/30 text-[11px] text-amber-200 space-y-1">
                     <div className="flex items-center gap-1.5 font-semibold text-amber-300">
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                       <span>Diagnóstico real de permisos de Google Cloud:</span>
                     </div>
                     <p className="text-slate-300 font-mono text-[10px]">
-                      {status?.gcpPermissions.errorMessage ||
-                        'La cuenta de servicio del contenedor no cuenta con roles administrativos para invocar directamente la API de Secret Manager desde el sandbox.'}
+                      {safeText(
+                        status?.gcpPermissions?.errorMessage,
+                        'La cuenta de servicio del contenedor no cuenta con roles administrativos para invocar directamente la API de Secret Manager desde el sandbox.'
+                      )}
                     </p>
                   </div>
                 )}
@@ -965,7 +968,7 @@ export const TelegramConnectionView: React.FC<TelegramConnectionViewProps> = ({
                   Comandos gcloud para vincular el secreto en producción:
                 </span>
                 <div className="space-y-1.5 font-mono text-[10px]">
-                  {status?.gcpPermissions.gcloudCommands.map((cmd, idx) => (
+                  {(status?.gcpPermissions?.gcloudCommands || []).map((cmd, idx) => (
                     <div
                       key={idx}
                       className="p-2 rounded-lg bg-[#02050e] border border-slate-800 flex items-center justify-between group hover:border-cyan-500/30 transition-colors"

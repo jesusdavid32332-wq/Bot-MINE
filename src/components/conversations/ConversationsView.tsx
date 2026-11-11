@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { TelegramUser, UserConversation, ChatMessage } from '../../types';
+import { safeText } from '../../utils/safeText';
 import {
   MessagesSquare,
   Search,
@@ -177,13 +178,13 @@ export const ConversationsView: React.FC<ConversationsViewProps> = ({
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-white truncate">{user.name || 'Usuario'}</span>
+                          <span className="text-xs font-bold text-white truncate">{safeText(user.name, 'Usuario')}</span>
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {user.username ? `@${user.username}` : user.telegramId}
+                            {user.username ? `@${safeText(user.username)}` : safeText(user.telegramId)}
                           </span>
                         </div>
                         <p className="text-[11px] text-amber-300 font-medium truncate mt-0.5">
-                          {user.stage || user.currentStep}
+                          {safeText(user.stage || user.currentStep)}
                         </p>
                       </div>
 
@@ -277,10 +278,10 @@ export const ConversationsView: React.FC<ConversationsViewProps> = ({
                             }`}
                           >
                             <div className="flex items-center justify-between gap-4 text-[10px] text-slate-400 font-mono">
-                              <span>{isBot ? 'Juan Carlos (Bot)' : isAdmin ? 'Super Admin' : selectedUser.name}</span>
-                              <span>{msg.timestamp}</span>
+                              <span>{isBot ? 'Juan Carlos (Bot)' : isAdmin ? 'Super Admin' : safeText(selectedUser.name)}</span>
+                              <span>{safeText(msg.timestamp)}</span>
                             </div>
-                            <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>
+                            <p className="whitespace-pre-line leading-relaxed">{safeText(msg.text)}</p>
                           </div>
                         </div>
                       );

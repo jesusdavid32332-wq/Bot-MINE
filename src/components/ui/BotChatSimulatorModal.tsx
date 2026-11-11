@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AutoMessage, FlowStepId, TelegramButton, TelegramUser } from '../../types';
 import { processDeterministicUpdate } from '../../services/deterministicBotEngine';
+import { safeText } from '../../utils/safeText';
 import { Modal } from './Modal';
 import {
   Send,
@@ -255,9 +256,9 @@ export const BotChatSimulatorModal: React.FC<BotChatSimulatorModalProps> = ({
                         </div>
                       )}
 
-                      <p className="text-[11.5px]">{m.text}</p>
+                      <p className="text-[11.5px]">{safeText(m.text)}</p>
                       <div className="flex justify-end items-center gap-1 mt-1 text-[9px] text-slate-400 font-mono">
-                        <span>{m.timestamp}</span>
+                        <span>{safeText(m.timestamp)}</span>
                         <CheckCheck className="w-3 h-3 text-sky-400" />
                       </div>
                     </div>
@@ -278,7 +279,7 @@ export const BotChatSimulatorModal: React.FC<BotChatSimulatorModalProps> = ({
                             }}
                             className="w-full py-1.5 px-3 rounded-lg text-xs font-semibold bg-[#242f3d] hover:bg-[#2e3c4e] text-sky-300 border border-sky-400/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
                           >
-                            <span>{btn.text}</span>
+                            <span>{safeText(btn.text)}</span>
                             {btn.type === 'url' && (
                               <ExternalLink className="w-3 h-3 text-sky-400 opacity-80" />
                             )}

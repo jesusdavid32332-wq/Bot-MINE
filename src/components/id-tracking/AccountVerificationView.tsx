@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AccountVerificationStatus, TelegramUser } from '../../types';
+import { safeText } from '../../utils/safeText';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -246,27 +247,27 @@ export const AccountVerificationView: React.FC<AccountVerificationViewProps> = (
                 >
                   <td className="py-3 px-4">
                     <div className="font-bold text-white group-hover:text-sky-300 transition-colors">
-                      {user.name}
+                      {safeText(user.name)}
                     </div>
                     <div className="text-[11px] font-mono text-slate-400">
-                      ID Tel: {user.telegramId} · @{user.username}
+                      ID Tel: {safeText(user.telegramId)} · @{safeText(user.username)}
                     </div>
                   </td>
 
                   <td className="py-3 px-4">
                     {user.accountId ? (
                       <span className="font-mono text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                        {user.accountId}
+                        {safeText(user.accountId)}
                       </span>
                     ) : (
                       <span className="text-slate-400 italic">En proceso</span>
                     )}
                   </td>
 
-                  <td className="py-3 px-4 text-slate-300">{user.country}</td>
+                  <td className="py-3 px-4 text-slate-300">{safeText(user.country)}</td>
 
                   <td className="py-3 px-4">
-                    <span className="capitalize text-slate-300">{user.experienceLevel}</span>
+                    <span className="capitalize text-slate-300">{safeText(user.experienceLevel)}</span>
                   </td>
 
                   <td className="py-3 px-4">
@@ -281,12 +282,12 @@ export const AccountVerificationView: React.FC<AccountVerificationViewProps> = (
                           : 'bg-red-500/20 text-red-400 border border-red-500/30'
                       }`}
                     >
-                      {user.accountStatus.toUpperCase().replace('_', ' ')}
+                      {safeText(user.accountStatus).toUpperCase().replace('_', ' ')}
                     </span>
                   </td>
 
                   <td className="py-3 px-4 text-slate-400 text-[11px] max-w-[200px] truncate">
-                    {user.notes || 'Sin notas registradas'}
+                    {safeText(user.notes, 'Sin notas registradas')}
                   </td>
 
                   <td className="py-3 px-4 text-right">
@@ -316,7 +317,7 @@ export const AccountVerificationView: React.FC<AccountVerificationViewProps> = (
                 <span className="text-[10px] font-mono uppercase text-sky-400 tracking-wider font-semibold">
                   Auditoría Manual de Registro
                 </span>
-                <h3 className="text-sm font-bold text-white">{selectedUser.name}</h3>
+                <h3 className="text-sm font-bold text-white">{safeText(selectedUser.name)}</h3>
               </div>
               <button
                 onClick={() => setSelectedUser(null)}
@@ -330,12 +331,12 @@ export const AccountVerificationView: React.FC<AccountVerificationViewProps> = (
               <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                 <div>
                   <span className="text-slate-400 block text-[10px]">ID Telegram:</span>
-                  <span className="font-mono text-white font-bold">{selectedUser.telegramId}</span>
+                  <span className="font-mono text-white font-bold">{safeText(selectedUser.telegramId)}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px]">ID de Cuenta 1xBet:</span>
                   <span className="font-mono text-amber-300 font-bold text-sm">
-                    {selectedUser.accountId || 'Pendiente'}
+                    {safeText(selectedUser.accountId, 'Pendiente')}
                   </span>
                 </div>
               </div>

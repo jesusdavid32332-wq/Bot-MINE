@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BotConfig, DeterministicKeywordConfig, TelegramUser } from '../../types';
+import { safeText } from '../../utils/safeText';
 import {
   ShieldAlert,
   Bot,
@@ -58,11 +59,11 @@ export const TelegramAdminMenuView: React.FC<TelegramAdminMenuViewProps> = ({
       } else {
         setTestResult({
           success: false,
-          message: data.error || 'Fallo al enviar mensaje de prueba',
+          message: safeText(data?.error, 'Fallo al enviar mensaje de prueba'),
         });
       }
     } catch (e: any) {
-      setTestResult({ success: false, message: e.message });
+      setTestResult({ success: false, message: safeText(e, 'Error de conexión') });
     } finally {
       setIsSendingTest(false);
     }
@@ -212,7 +213,7 @@ export const TelegramAdminMenuView: React.FC<TelegramAdminMenuViewProps> = ({
             ) : (
               <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" />
             )}
-            <span>{testResult.message}</span>
+            <span>{safeText(testResult.message)}</span>
           </div>
           <button
             onClick={() => setTestResult(null)}
