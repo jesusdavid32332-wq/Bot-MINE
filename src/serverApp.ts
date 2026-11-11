@@ -80,6 +80,56 @@ export async function ensureWebhookSecret(): Promise<string> {
   return CANONICAL_WEBHOOK_SECRET;
 }
 
+export async function getAuthorizedWebhookSecrets(): Promise<Set<string>> {
+  const secrets = new Set<string>();
+  if (currentWebhookSecret && currentWebhookSecret.trim().length > 0) {
+    secrets.add(currentWebhookSecret.trim());
+  }
+  if (CANONICAL_WEBHOOK_SECRET && CANONICAL_WEBHOOK_SECRET.trim().length > 0) {
+    secrets.add(CANONICAL_WEBHOOK_SECRET.trim());
+  }
+  secrets.add('jc_mines_webhook_secret_9981');
+  secrets.add('super_secreto_webhook_seguro_mines_ai');
+
+  if (process.env.WEBHOOK_SECRET) {
+    const envSec = process.env.WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim();
+    if (envSec) secrets.add(envSec);
+  }
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+    const envSec = process.env.TELEGRAM_WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim();
+    if (envSec) secrets.add(envSec);
+  }
+
+  try {
+    const bConfig = await PostgresService.getBotConfig();
+    if (bConfig?.webhookSecret && typeof bConfig.webhookSecret === 'string') {
+      const dbSec = bConfig.webhookSecret.replace(/^["']|["']$/g, '').trim();
+      if (dbSec) secrets.add(dbSec);
+    }
+  } catch (err) {
+    // Non-fatal fallback
+  }
+
+  // Also query Firestore settings/bot_config if available
+  try {
+    const { doc, getDoc } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    const snap = await getDoc(doc(db, 'settings', 'bot_config'));
+    if (snap.exists()) {
+      const data = snap.data();
+      const fsSec = data.webhookSecret || data.data?.webhookSecret;
+      if (fsSec && typeof fsSec === 'string') {
+        const cleanFsSec = fsSec.replace(/^["']|["']$/g, '').trim();
+        if (cleanFsSec) secrets.add(cleanFsSec);
+      }
+    }
+  } catch (fsErr) {
+    // Non-fatal fallback
+  }
+
+  return secrets;
+}
+
 export async function ensureBotToken(): Promise<string | undefined> {
   const memToken = getActiveBotToken();
   if (memToken && memToken.includes(':')) {
@@ -95,6 +145,25 @@ export async function ensureBotToken(): Promise<string | undefined> {
   } catch (err) {
     console.warn('[Neon Postgres] Error buscando token en base de datos:', err);
   }
+
+  // Also query Firestore settings/bot_config
+  try {
+    const { doc, getDoc } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    const snap = await getDoc(doc(db, 'settings', 'bot_config'));
+    if (snap.exists()) {
+      const data = snap.data();
+      const fsToken = data.botToken || data.data?.botToken;
+      if (fsToken && typeof fsToken === 'string' && fsToken.includes(':')) {
+        currentBotToken = fsToken;
+        process.env.TELEGRAM_BOT_TOKEN = fsToken;
+        return currentBotToken;
+      }
+    }
+  } catch (fsErr) {
+    console.warn('[Firestore] Error buscando token en Firestore:', fsErr);
+  }
+
   return undefined;
 }
 
@@ -494,17 +563,7 @@ app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, re
 
   // Security check: validate secret token (excluded from standard user JWT/session auth,
   // secured exclusively via Telegram's official X-Telegram-Bot-Api-Secret-Token header)
-  const activeSecret = getActiveWebhookSecret();
-  const authorized = new Set<string>(
-    [
-      activeSecret,
-      CANONICAL_WEBHOOK_SECRET,
-      'jc_mines_webhook_secret_9981',
-      'super_secreto_webhook_seguro_mines_ai',
-      process.env.WEBHOOK_SECRET ? process.env.WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim() : '',
-      process.env.TELEGRAM_WEBHOOK_SECRET ? process.env.TELEGRAM_WEBHOOK_SECRET.replace(/^["']|["']$/g, '').trim() : '',
-    ].filter(Boolean)
-  );
+  const authorized = await getAuthorizedWebhookSecrets();
 
   if (!cleanHeader || !authorized.has(cleanHeader)) {
     console.warn(
@@ -633,6 +692,13 @@ app.post('/api/bot-config', async (req, res) => {
   const { config } = req.body;
   if (!config) return res.status(400).json({ error: 'Configuración requerida' });
   try {
+    if (config.webhookSecret && typeof config.webhookSecret === 'string' && config.webhookSecret.trim().length > 0) {
+      currentWebhookSecret = config.webhookSecret.trim();
+    }
+    if (config.botToken && typeof config.botToken === 'string' && config.botToken.includes(':')) {
+      currentBotToken = config.botToken.trim();
+      process.env.TELEGRAM_BOT_TOKEN = currentBotToken;
+    }
     await PostgresService.saveBotConfig(config);
     res.json({ success: true, config });
   } catch (e) {
@@ -875,13 +941,12 @@ app.post('/api/telegram/connect', async (req, res) => {
     let webhookNotice = '';
 
     if (targetWebhookUrl) {
-      const isAlreadyConfigured = existingWebhookUrl && existingWebhookUrl.replace(/\/$/, '') === targetWebhookUrl.replace(/\/$/, '');
+      const activeSecret = getActiveWebhookSecret();
+      try {
+        // Step 1: Delete existing webhook without dropping pending updates to force Telegram to invalidate stale secret cache
+        await fetch(`https://api.telegram.org/bot${cleanToken}/deleteWebhook?drop_pending_updates=false`);
 
-      if (isAlreadyConfigured) {
-        webhookRegistered = true;
-        webhookNotice = `El bot @${botInfo.username} ya estaba correctamente conectado al webhook (${targetWebhookUrl}).`;
-      } else {
-        const activeSecret = getActiveWebhookSecret();
+        // Step 2: Re-register webhook with canonical secret_token
         const setRes = await fetch(
           `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&secret_token=${encodeURIComponent(activeSecret)}&drop_pending_updates=false`
         );
@@ -889,6 +954,7 @@ app.post('/api/telegram/connect', async (req, res) => {
 
         if (setData.ok) {
           webhookRegistered = true;
+          webhookNotice = `Webhook registrado y sincronizado exitosamente con secret_token en Telegram.`;
           const verifyWhRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
           const verifyWhData = (await verifyWhRes.json()) as any;
           if (verifyWhData.ok && verifyWhData.result) {
@@ -900,6 +966,8 @@ app.post('/api/telegram/connect', async (req, res) => {
         } else {
           webhookNotice = `Error al registrar webhook: ${setData.description || 'Fallo desconocido'}`;
         }
+      } catch (whErr) {
+        webhookNotice = `Excepción al configurar webhook: ${whErr instanceof Error ? whErr.message : String(whErr)}`;
       }
     }
 
@@ -1078,6 +1146,10 @@ app.post('/api/telegram/register-webhook', async (_req, res) => {
   const secretParam = `&secret_token=${encodeURIComponent(secret)}`;
 
   try {
+    // Step 1: Invalidate Telegram's existing webhook cache without dropping pending updates
+    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`);
+
+    // Step 2: Register webhook with canonical secret_token
     const setRes = await fetch(
       `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}${secretParam}&drop_pending_updates=false`
     );
