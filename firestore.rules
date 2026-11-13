@@ -63,6 +63,12 @@ service cloud.firestore {
       allow list: if true;
     }
 
+    // Deposits collection: User deposit receipts for manual admin verification
+    match /deposits/{depositId} {
+      allow get, write: if isValidId(depositId);
+      allow list: if true;
+    }
+
     // Test connection doc
     match /test/{docId} {
       allow read, write: if true;

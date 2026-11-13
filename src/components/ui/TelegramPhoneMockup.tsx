@@ -71,17 +71,13 @@ export const TelegramPhoneMockup: React.FC<TelegramPhoneMockupProps> = ({
             <div className="rounded-lg overflow-hidden mb-2 border border-black/40 relative group bg-black/40">
               {mediaType === 'video' ? (
                 <div className="relative aspect-video flex items-center justify-center bg-slate-900">
-                  <img
+                  <video
                     src={mediaUrl}
-                    alt="Video thumbnail"
-                    className="w-full h-full object-cover opacity-80"
-                    referrerPolicy="no-referrer"
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full max-h-48 object-cover rounded"
                   />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                    <div className="w-9 h-9 rounded-full bg-sky-500/80 flex items-center justify-center text-white pl-0.5 shadow-lg">
-                      ▶
-                    </div>
-                  </div>
                 </div>
               ) : (
                 <img

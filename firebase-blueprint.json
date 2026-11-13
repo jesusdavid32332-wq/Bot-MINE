@@ -131,6 +131,28 @@
         "processedAt": { "type": "string", "description": "ISO timestamp when processed" }
       },
       "required": ["updateId", "processedAt"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "Deposit receipt photo and manual verification status submitted by a Telegram user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique deposit receipt ID" },
+        "telegramId": { "type": "string", "description": "Telegram user ID" },
+        "userId": { "type": "string", "description": "Internal user ID" },
+        "username": { "type": "string", "description": "Telegram @username" },
+        "name": { "type": "string", "description": "User display name" },
+        "planId": { "type": "string", "description": "Selected initial plan ID" },
+        "planLabel": { "type": "string", "description": "Selected initial plan label" },
+        "receiptUrl": { "type": "string", "description": "Stored URL path to receipt photo" },
+        "telegramFileId": { "type": "string", "description": "Telegram file_id for the uploaded photo" },
+        "receivedAt": { "type": "string", "description": "ISO timestamp when receipt was received" },
+        "status": { "type": "string", "description": "pending, verified, or rejected" },
+        "reviewedBy": { "type": "string", "description": "Admin who reviewed the deposit" },
+        "reviewedAt": { "type": "string", "description": "ISO timestamp of admin review" },
+        "rejectionReason": { "type": "string", "description": "Optional reason when rejected" }
+      },
+      "required": ["id", "telegramId", "receiptUrl", "receivedAt", "status"]
     }
   },
   "firestore": {
@@ -165,6 +187,10 @@
     "/processed_updates/{updateId}": {
       "schema": { "$ref": "#/entities/ProcessedUpdate" },
       "description": "Collection of processed Telegram update IDs for idempotency"
+    },
+    "/deposits/{depositId}": {
+      "schema": { "$ref": "#/entities/Deposit" },
+      "description": "Collection of deposit receipt photos awaiting or completing manual admin verification"
     }
   }
 }

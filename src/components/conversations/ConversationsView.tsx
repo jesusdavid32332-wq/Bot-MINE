@@ -281,6 +281,24 @@ export const ConversationsView: React.FC<ConversationsViewProps> = ({
                               <span>{isBot ? 'Juan Carlos (Bot)' : isAdmin ? 'Super Admin' : safeText(selectedUser.name)}</span>
                               <span>{safeText(msg.timestamp)}</span>
                             </div>
+                            {msg.mediaUrl && (
+                              <div className="rounded-xl overflow-hidden bg-black border border-slate-800 max-w-xs my-1">
+                                {msg.mediaType === 'video' ? (
+                                  <video
+                                    src={msg.mediaUrl}
+                                    controls
+                                    className="w-full max-h-56 object-cover"
+                                  />
+                                ) : (
+                                  <img
+                                    src={msg.mediaUrl}
+                                    alt="Archivo adjunto"
+                                    className="w-full max-h-60 object-contain"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                )}
+                              </div>
+                            )}
                             <p className="whitespace-pre-line leading-relaxed">{safeText(msg.text)}</p>
                           </div>
                         </div>

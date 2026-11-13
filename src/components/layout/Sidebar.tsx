@@ -16,6 +16,7 @@ import {
   BotConfigIcon3D,
   GeneralConfigIcon3D,
   TelegramConnectIcon3D,
+  DepositsIcon3D,
 } from '../ui/Icons3D';
 import { ShieldCheck, Flame, Radio } from 'lucide-react';
 
@@ -27,18 +28,20 @@ interface SidebarProps {
   usersCount?: number;
   messagesCount?: number;
   trackedIdsCount?: number;
+  pendingDepositsCount?: number;
 }
 
 interface MenuItem {
   id: SectionId;
   label: string;
   icon: React.ComponentType<{ className?: string; size?: number }>;
-  badgeKey?: 'users' | 'messages' | 'ids' | 'fixed';
+  badgeKey?: 'users' | 'messages' | 'ids' | 'deposits' | 'fixed';
   badgeStatic?: string;
 }
 
 const MENU_ITEMS: MenuItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon3D },
+  { id: 'deposits', label: 'Depósitos pendientes', icon: DepositsIcon3D, badgeKey: 'deposits' },
   { id: 'telegram-connection', label: 'Conexión de Telegram', icon: TelegramConnectIcon3D, badgeKey: 'fixed', badgeStatic: 'BOT' },
   { id: 'messages', label: 'Mensajes automáticos', icon: MessagesIcon3D, badgeKey: 'messages' },
   { id: 'flow', label: 'Flujo de conversaciones', icon: FlowIcon3D },
@@ -62,11 +65,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   usersCount = 0,
   messagesCount = 15,
   trackedIdsCount = 0,
+  pendingDepositsCount = 0,
 }) => {
   const getBadgeContent = (item: MenuItem) => {
     if (item.badgeKey === 'users') return usersCount > 0 ? String(usersCount) : undefined;
     if (item.badgeKey === 'messages') return String(messagesCount);
     if (item.badgeKey === 'ids') return trackedIdsCount > 0 ? String(trackedIdsCount) : undefined;
+    if (item.badgeKey === 'deposits') return pendingDepositsCount > 0 ? String(pendingDepositsCount) : undefined;
     if (item.badgeKey === 'fixed') return item.badgeStatic;
     return undefined;
   };

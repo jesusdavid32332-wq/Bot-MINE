@@ -4,8 +4,19 @@ import fs from 'fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import multer from 'multer';
 import {
+  DEFAULT_APPROVAL_MESSAGE_TEXT,
+  DEFAULT_DEPOSIT_PROMPT_TEXT,
+  DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
   DEFAULT_KEYWORD_CONFIG,
+  DEFAULT_PLANS_MESSAGE_TEXT,
+  DEFAULT_REGISTRATION_LINK,
+  DEFAULT_REGISTRATION_MESSAGE_TEXT,
+  DEFAULT_REGISTRATION_PHOTOS,
+  createTransitionRecord,
+  getEtapa2ContentMessages,
+  handleIncomingReceiptPhoto,
   processDeterministicUpdate,
 } from './services/deterministicBotEngine';
 import {
@@ -16,7 +27,7 @@ import {
   INITIAL_MESSAGES,
   INITIAL_USERS,
 } from './services/mockData';
-import { AutoMessage, DeterministicKeywordConfig, FlowStepId, TelegramUser } from './types';
+import { AutoMessage, DepositReceipt, DeterministicKeywordConfig, FlowStepId, TelegramUser } from './types';
 import { PostgresService } from './services/postgresService';
 
 dotenv.config();
@@ -263,6 +274,7 @@ app.use((req: Request, _res: Response, next) => {
   if (req.url && !req.url.startsWith('/api/') && req.url !== '/api' && !req.url.startsWith('/health') && !req.url.startsWith('/public') && !req.url.startsWith('/assets')) {
     const isApiSubpath = req.url.startsWith('/telegram/') ||
       req.url.startsWith('/users') ||
+      req.url.startsWith('/deposits') ||
       req.url.startsWith('/messages') ||
       req.url.startsWith('/media') ||
       req.url.startsWith('/conditions') ||
@@ -314,7 +326,89 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', postgres: PostgresService.isConfigured(), serverless: Boolean(process.env.VERCEL) });
 });
 
-// Helper: Telegram Bot API Call with automatic Markdown retry and media fallback
+// Persistent Telegram file_id cache to accelerate repeat sends & avoid re-uploads
+const telegramFileIdCache = new Map<string, string>();
+let fileIdsLoaded = false;
+
+function normalizeAssetKey(urlOrPath: string): string {
+  const clean = String(urlOrPath || '').trim();
+  if (clean.startsWith(PUBLIC_BASE_URL)) {
+    return clean.slice(PUBLIC_BASE_URL.length);
+  }
+  const idx = clean.indexOf('/public/');
+  if (idx !== -1) return clean.slice(idx);
+  return clean;
+}
+
+function resolveLocalAssetPath(urlOrPath: string): string | null {
+  const key = normalizeAssetKey(urlOrPath);
+  if (!key || key.startsWith('http://') || key.startsWith('https://')) {
+    return null;
+  }
+  const rel = key.startsWith('/') ? key.slice(1) : key;
+  const fullPath = path.resolve(rootDir, rel);
+  if (!fullPath.startsWith(path.resolve(rootDir, 'public'))) {
+    return null;
+  }
+  return fs.existsSync(fullPath) ? fullPath : null;
+}
+
+async function ensureTelegramFileIdsLoaded() {
+  if (fileIdsLoaded) return;
+  fileIdsLoaded = true;
+  try {
+    const { getSql } = await import('./services/postgresService');
+    const sql = getSql();
+    if (sql) {
+      await PostgresService.ensureSchema();
+      const rows = await sql`SELECT data FROM settings WHERE id = 'telegram_file_ids' LIMIT 1;`;
+      if (rows.length > 0 && rows[0].data && typeof rows[0].data === 'object') {
+        Object.entries(rows[0].data as Record<string, string>).forEach(([k, v]) => {
+          if (typeof v === 'string' && v) telegramFileIdCache.set(k, v);
+        });
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+async function cacheTelegramFileId(urlOrPath: string, fileId?: string) {
+  if (!fileId) return;
+  const key = normalizeAssetKey(urlOrPath);
+  if (!key || telegramFileIdCache.get(key) === fileId) return;
+  telegramFileIdCache.set(key, fileId);
+  try {
+    const { getSql } = await import('./services/postgresService');
+    const sql = getSql();
+    if (sql) {
+      const obj: Record<string, string> = {};
+      telegramFileIdCache.forEach((v, k) => {
+        obj[k] = v;
+      });
+      await sql`
+        INSERT INTO settings (id, data, updated_at)
+        VALUES ('telegram_file_ids', ${JSON.stringify(obj)}, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = CURRENT_TIMESTAMP;
+      `;
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+function extractFileIdFromTelegramResult(result: any, mediaType: 'photo' | 'video'): string | undefined {
+  if (!result) return undefined;
+  if (mediaType === 'video') {
+    return result.video?.file_id || result.document?.file_id;
+  }
+  if (Array.isArray(result.photo) && result.photo.length > 0) {
+    return result.photo[result.photo.length - 1]?.file_id;
+  }
+  return undefined;
+}
+
+// Helper: Telegram Bot API Call with file_id caching, local multipart upload fallback, and Markdown retry
 async function sendTelegramMessage(chatId: string | number, text: string, options: any = {}) {
   let token = getActiveBotToken();
   if (!token) {
@@ -335,8 +429,16 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     };
   }
 
-  const hasValidPhoto = Boolean(options.photo && String(options.photo).startsWith('http'));
-  const hasValidVideo = Boolean(options.video && String(options.video).startsWith('http'));
+  await ensureTelegramFileIdsLoaded();
+
+  const rawMedia = options.video || options.photo;
+  const mediaKind: 'video' | 'photo' | null = options.video ? 'video' : options.photo ? 'photo' : null;
+  const assetKey = rawMedia ? normalizeAssetKey(String(rawMedia)) : '';
+  const cachedFileId = assetKey ? telegramFileIdCache.get(assetKey) : undefined;
+  const localFilePath = rawMedia && !cachedFileId ? resolveLocalAssetPath(String(rawMedia)) : null;
+
+  const hasValidPhoto = Boolean(options.photo && (cachedFileId || localFilePath || String(options.photo).startsWith('http')));
+  const hasValidVideo = Boolean(options.video && (cachedFileId || localFilePath || String(options.video).startsWith('http')));
 
   const endpoint = hasValidPhoto
     ? `https://api.telegram.org/bot${token}/sendPhoto`
@@ -344,56 +446,97 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
       ? `https://api.telegram.org/bot${token}/sendVideo`
       : `https://api.telegram.org/bot${token}/sendMessage`;
 
-  const body: Record<string, any> = {
-    chat_id: chatId,
-  };
+  const captionText = text.length > 1024 ? text.slice(0, 1020) + '...' : text;
 
-  if (hasValidPhoto) {
-    body.photo = options.photo;
-    // Telegram caption limit is strictly 1024 chars
-    body.caption = text.length > 1024 ? text.slice(0, 1020) + '...' : text;
-    body.parse_mode = 'Markdown';
-  } else if (hasValidVideo) {
-    body.video = options.video;
-    body.caption = text.length > 1024 ? text.slice(0, 1020) + '...' : text;
-    body.parse_mode = 'Markdown';
-  } else {
-    // Telegram message text limit is 4096 chars
-    body.text = text.length > 4096 ? text.slice(0, 4092) + '...' : text;
-    body.parse_mode = 'Markdown';
-  }
+  const dispatchMediaRequest = async (usePlainText: boolean): Promise<any> => {
+    if (localFilePath && (hasValidPhoto || hasValidVideo) && !cachedFileId) {
+      const fileBuffer = await fs.promises.readFile(localFilePath);
+      const ext = path.extname(localFilePath).toLowerCase();
+      const mimeType =
+        mediaKind === 'video'
+          ? ext === '.mov'
+            ? 'video/quicktime'
+            : 'video/mp4'
+          : ext === '.png'
+            ? 'image/png'
+            : 'image/jpeg';
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      form.append(mediaKind === 'video' ? 'video' : 'photo', new Blob([fileBuffer], { type: mimeType }), path.basename(localFilePath));
+      if (captionText) {
+        form.append('caption', captionText);
+        if (!usePlainText) form.append('parse_mode', 'Markdown');
+      }
+      if (mediaKind === 'video') {
+        form.append('supports_streaming', 'true');
+      }
+      if (options.reply_markup) {
+        form.append('reply_markup', JSON.stringify(options.reply_markup));
+      }
+      const res = await fetch(endpoint, { method: 'POST', body: form });
+      return res.json();
+    }
 
-  if (options.reply_markup) {
-    body.reply_markup = options.reply_markup;
-  }
+    const body: Record<string, any> = {
+      chat_id: chatId,
+    };
 
-  try {
+    if (hasValidPhoto) {
+      body.photo = cachedFileId || options.photo;
+      if (captionText) {
+        body.caption = captionText;
+        if (!usePlainText) body.parse_mode = 'Markdown';
+      }
+    } else if (hasValidVideo) {
+      body.video = cachedFileId || options.video;
+      body.supports_streaming = true;
+      if (captionText) {
+        body.caption = captionText;
+        if (!usePlainText) body.parse_mode = 'Markdown';
+      }
+    } else {
+      body.text = text.length > 4096 ? text.slice(0, 4092) + '...' : text;
+      if (!usePlainText) body.parse_mode = 'Markdown';
+    }
+
+    if (options.reply_markup) {
+      body.reply_markup = options.reply_markup;
+    }
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    return res.json();
+  };
 
-    let data = (await res.json()) as any;
+  try {
+    let data = (await dispatchMediaRequest(false)) as any;
 
     // Retry 1: If Markdown entities failed, retry plain text without parse_mode
     if (!data.ok && data.description?.includes("can't parse entities")) {
-      const plainBody = { ...body };
-      delete plainBody.parse_mode;
-      const retryRes = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(plainBody),
-      });
-      data = await retryRes.json();
+      data = await dispatchMediaRequest(true);
     }
 
-    // Retry 2: If photo or video failed (e.g. image download timeout on Telegram side), fall back to sendMessage text
-    if (!data.ok && (hasValidPhoto || hasValidVideo)) {
+    // Cache file_id on successful media send
+    if (data.ok && mediaKind && rawMedia && !cachedFileId) {
+      const returnedFileId = extractFileIdFromTelegramResult(data.result, mediaKind);
+      if (returnedFileId) {
+        cacheTelegramFileId(String(rawMedia), returnedFileId).catch(() => {});
+      }
+    }
+
+    // Retry 2: If photo or video failed (and not a terminal chat error), fall back to sendMessage text
+    const isTerminalChatError =
+      data.error_code === 403 ||
+      String(data.description || '').toLowerCase().includes('chat not found') ||
+      String(data.description || '').toLowerCase().includes('bot was blocked');
+    if (!data.ok && !isTerminalChatError && (hasValidPhoto || hasValidVideo) && text.trim()) {
       console.warn(`[Telegram Media Fallback] Falló multimedia (${data.description}), enviando como mensaje de texto a ${chatId}`);
       const textOnlyBody: Record<string, any> = {
         chat_id: chatId,
-        text: text,
+        text: text.length > 4096 ? text.slice(0, 4092) + '...' : text,
       };
       if (options.reply_markup) {
         textOnlyBody.reply_markup = options.reply_markup;
@@ -412,6 +555,148 @@ async function sendTelegramMessage(chatId: string | number, text: string, option
     return data;
   } catch (err) {
     console.error(`[Telegram API Error] Fallo de red al enviar a ${chatId}:`, err);
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Helper: Telegram sendMediaGroup API Call for albums (Guía de Registro 1-6, Guía de ID, Recarga)
+async function sendTelegramMediaGroup(
+  chatId: string | number,
+  items: { type: 'photo' | 'video'; url: string }[],
+  caption?: string
+) {
+  let token = getActiveBotToken();
+  if (!token) {
+    token = await ensureBotToken();
+  }
+
+  if (!items || items.length === 0) return { ok: true };
+
+  // Simulation fallback if no token
+  if (!token || !token.includes(':')) {
+    console.warn(`[Telegram Simulation] MediaGroup simulado a chat_id ${chatId} (${items.length} archivos)`);
+    return {
+      ok: true,
+      result: items.map((_, idx) => ({ message_id: Math.floor(Math.random() * 100000) + idx })),
+      simulation: true,
+    };
+  }
+
+  await ensureTelegramFileIdsLoaded();
+
+  const cleanCaption = caption ? (caption.length > 1024 ? caption.slice(0, 1020) + '...' : caption) : undefined;
+
+  const dispatchMediaGroup = async (usePlainText: boolean): Promise<any> => {
+    const form = new FormData();
+    let needsMultipart = false;
+    const mediaDescriptors: any[] = [];
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx];
+      const key = normalizeAssetKey(item.url);
+      const cachedId = telegramFileIdCache.get(key);
+      const localPath = !cachedId ? resolveLocalAssetPath(item.url) : null;
+
+      let mediaRef: string;
+      if (cachedId) {
+        mediaRef = cachedId;
+      } else if (localPath) {
+        needsMultipart = true;
+        const attachKey = `media_${idx}`;
+        const fileBuffer = await fs.promises.readFile(localPath);
+        const ext = path.extname(localPath).toLowerCase();
+        const mimeType =
+          item.type === 'video'
+            ? 'video/mp4'
+            : ext === '.png'
+              ? 'image/png'
+              : 'image/jpeg';
+        form.append(attachKey, new Blob([fileBuffer], { type: mimeType }), path.basename(localPath));
+        mediaRef = `attach://${attachKey}`;
+      } else {
+        mediaRef = item.url.startsWith('http')
+          ? item.url
+          : `${PUBLIC_BASE_URL}${item.url.startsWith('/') ? '' : '/'}${item.url}`;
+      }
+
+      const descriptor: Record<string, any> = {
+        type: item.type === 'video' ? 'video' : 'photo',
+        media: mediaRef,
+      };
+      if (item.type === 'video') {
+        descriptor.supports_streaming = true;
+      }
+      if (idx === 0 && cleanCaption) {
+        descriptor.caption = cleanCaption;
+        if (!usePlainText) {
+          descriptor.parse_mode = 'Markdown';
+        }
+      }
+      mediaDescriptors.push(descriptor);
+    }
+
+    if (needsMultipart) {
+      form.append('chat_id', String(chatId));
+      form.append('media', JSON.stringify(mediaDescriptors));
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMediaGroup`, {
+        method: 'POST',
+        body: form,
+      });
+      return res.json();
+    }
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMediaGroup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        media: mediaDescriptors,
+      }),
+    });
+    return res.json();
+  };
+
+  try {
+    let data = (await dispatchMediaGroup(false)) as any;
+
+    if (!data.ok && data.description?.includes("can't parse entities")) {
+      data = await dispatchMediaGroup(true);
+    }
+
+    if (data.ok && Array.isArray(data.result)) {
+      data.result.forEach((sentMsg: any, idx: number) => {
+        const srcItem = items[idx];
+        if (!srcItem) return;
+        const returnedId = extractFileIdFromTelegramResult(sentMsg, srcItem.type);
+        if (returnedId) {
+          cacheTelegramFileId(srcItem.url, returnedId).catch(() => {});
+        }
+      });
+      return data;
+    }
+
+    const isTerminalChatError =
+      data.error_code === 403 ||
+      String(data.description || '').toLowerCase().includes('chat not found') ||
+      String(data.description || '').toLowerCase().includes('bot was blocked');
+    if (!data.ok && !isTerminalChatError) {
+      console.warn(`[Telegram sendMediaGroup Fallback] sendMediaGroup notice: ${data.description}. Enviando secuencia ordenada.`);
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        const fullUrl = item.url.startsWith('http')
+          ? item.url
+          : `${PUBLIC_BASE_URL}${item.url.startsWith('/') ? '' : '/'}${item.url}`;
+        const itemCaption = idx === 0 && cleanCaption ? cleanCaption : '';
+        if (item.type === 'video') {
+          await sendTelegramMessage(chatId, itemCaption, { video: fullUrl });
+        } else {
+          await sendTelegramMessage(chatId, itemCaption, { photo: fullUrl });
+        }
+      }
+    }
+    return data;
+  } catch (err) {
+    console.error(`[Telegram sendMediaGroup Error] Fallo de red:`, err);
     return { ok: false, error: String(err) };
   }
 }
@@ -455,15 +740,26 @@ async function getOrCreateUser(from: any): Promise<TelegramUser> {
     username: from.username || `user_${telegramId}`,
     joinDate: new Date().toISOString().replace('T', ' ').slice(0, 16),
     country: '',
-    currentStep: 'START',
-    stage: 'Inicio',
+    currentStep: 'stage_1_welcome',
+    stage: 'stage_1_welcome',
     lastActivity: 'Ahora mismo',
     status: 'active',
     messagesSent: 0,
     messagesReceived: 0,
     consentGiven: false,
     experienceLevel: 'principiante',
-    accountStatus: 'pendiente_revision',
+    accountStatus: 'pending_verification',
+    paymentStatus: 'unpaid',
+    stageTransitions: [
+      {
+        id: `tr-init-${Date.now()}`,
+        fromStage: 'none',
+        toStage: 'stage_1_welcome',
+        timestamp: new Date().toISOString(),
+        actor: 'system',
+        reason: 'Primer contacto con el bot',
+      },
+    ],
   };
 
   inMemoryUsers.set(telegramId, newUser);
@@ -497,9 +793,72 @@ async function saveUserProgress(user: TelegramUser) {
   }
 }
 
+async function mirrorDepositToFirestore(receipt: DepositReceipt) {
+  try {
+    const { doc, setDoc } = await import('firebase/firestore');
+    const { db } = await import('./firebase');
+    await setDoc(doc(db, 'deposits', receipt.id), receipt, { merge: true });
+  } catch {
+    // Non-fatal Firestore sync fallback
+  }
+}
+
+async function downloadTelegramPhotoToDisk(
+  fileId: string,
+  telegramId: string,
+  testReceiptUrl?: string
+): Promise<string> {
+  if (testReceiptUrl && typeof testReceiptUrl === 'string' && testReceiptUrl.trim()) {
+    return testReceiptUrl.trim();
+  }
+
+  let token = getActiveBotToken();
+  if (!token) {
+    token = await ensureBotToken();
+  }
+
+  if (token && token.includes(':') && fileId && !fileId.startsWith('sim-') && !fileId.startsWith('test-')) {
+    try {
+      const infoRes = await fetch(
+        `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`
+      );
+      const infoData = (await infoRes.json()) as any;
+      if (infoData.ok && infoData.result?.file_path) {
+        const tgFilePath = String(infoData.result.file_path);
+        const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${tgFilePath}`);
+        if (fileRes.ok) {
+          const arrayBuffer = await fileRes.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const ext = path.extname(tgFilePath) || '.jpeg';
+          const safeTgId = String(telegramId).replace(/[^a-zA-Z0-9_-]/g, '');
+          const fileName = `receipt_${safeTgId}_${Date.now()}${ext}`;
+          const receiptsDir = path.join(rootDir, 'public', 'assets', 'uploads', 'receipts');
+          if (!fs.existsSync(receiptsDir)) {
+            fs.mkdirSync(receiptsDir, { recursive: true });
+          }
+          await fs.promises.writeFile(path.join(receiptsDir, fileName), buffer);
+          return `/public/assets/uploads/receipts/${fileName}`;
+        }
+      }
+    } catch (err) {
+      console.warn('[Telegram getFile Error] No se pudo descargar comprobante, usando respaldo visual:', err);
+    }
+  }
+
+  return '/public/assets/aistudio/IMG_8055_1c7f857b.jpeg';
+}
+
 async function recordMessageInConversation(
   userId: string,
-  message: { id: string; sender: 'user' | 'bot' | 'admin'; text: string; timestamp: string; stepTriggered?: FlowStepId }
+  message: {
+    id: string;
+    sender: 'user' | 'bot' | 'admin';
+    text: string;
+    timestamp: string;
+    stepTriggered?: FlowStepId;
+    mediaUrl?: string;
+    mediaType?: 'photo' | 'video';
+  }
 ) {
   await PostgresService.recordConversationMessage(userId, message);
 
@@ -532,13 +891,123 @@ async function recordMessageInConversation(
   }
 }
 
+// Helper: deliver Point 7 + Point 8 + Orientation Video after admin approves deposit
+async function deliverOrientationMaterialAndUpdateUser(
+  user: TelegramUser,
+  adminName: string,
+  notes?: string,
+  receiptId?: string
+): Promise<TelegramUser> {
+  const prevStage = user.stage;
+  const nowIso = new Date().toISOString();
+
+  user.paymentStatus = 'payment_verified';
+  user.paymentVerifiedAt = nowIso;
+  user.paymentVerifiedBy = adminName;
+  user.stage = 'stage_2_content_sent';
+  user.currentStep = 'stage_2_content_sent';
+  user.flowStateLabel = 'ACCESO A ORIENTACIÓN HABILITADO';
+  if (notes) user.notes = notes;
+
+  user.stageTransitions = user.stageTransitions || [];
+  user.stageTransitions.push(
+    createTransitionRecord(
+      prevStage,
+      'stage_2_content_sent',
+      'admin',
+      adminName,
+      'Depósito aprobado manualmente desde panel administrativo — acceso a orientación habilitado'
+    )
+  );
+
+  await saveUserProgress(user);
+
+  // Mark receipt(s) verified
+  if (receiptId) {
+    const updatedReceipt = await PostgresService.updateDepositReceiptStatus(receiptId, 'verified', adminName);
+    if (updatedReceipt) {
+      mirrorDepositToFirestore(updatedReceipt).catch(() => {});
+    }
+  } else {
+    const allReceipts = await PostgresService.getDepositReceipts();
+    const pendingForUser = allReceipts.filter(
+      (r) => r.telegramId === user.telegramId && r.status === 'pending'
+    );
+    for (const r of pendingForUser) {
+      const updatedReceipt = await PostgresService.updateDepositReceiptStatus(r.id, 'verified', adminName);
+      if (updatedReceipt) {
+        mirrorDepositToFirestore(updatedReceipt).catch(() => {});
+      }
+    }
+  }
+
+  const conditions = await PostgresService.getConditions();
+  const orientationMsgs = getEtapa2ContentMessages(
+    user,
+    conditions?.customMinesContentText || DEFAULT_KEYWORD_CONFIG.customMinesContentText,
+    conditions
+  );
+
+  for (let i = 0; i < orientationMsgs.length; i++) {
+    const outMsg = orientationMsgs[i];
+    const sendOptions: any = {};
+
+    if (outMsg.buttons && outMsg.buttons.length > 0) {
+      sendOptions.reply_markup = {
+        inline_keyboard: outMsg.buttons.map((b) =>
+          b.type === 'url'
+            ? [{ text: b.text, url: b.value }]
+            : [{ text: b.text, callback_data: b.value || b.id }]
+        ),
+      };
+    }
+
+    if (outMsg.mediaUrl) {
+      const fullMediaUrl = outMsg.mediaUrl.startsWith('http')
+        ? outMsg.mediaUrl
+        : `${PUBLIC_BASE_URL}${outMsg.mediaUrl.startsWith('/') ? '' : '/'}${outMsg.mediaUrl}`;
+      if (outMsg.mediaType === 'video') {
+        sendOptions.video = fullMediaUrl;
+      } else {
+        sendOptions.photo = fullMediaUrl;
+      }
+    }
+
+    await sendTelegramMessage(user.telegramId, outMsg.text, sendOptions);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-or-${i}`,
+      sender: 'bot',
+      text: outMsg.text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: outMsg.stepTriggered || 'RONDAS_ORIENTACION',
+      mediaUrl: outMsg.mediaUrl,
+      mediaType: outMsg.mediaType,
+    });
+
+    if (i < orientationMsgs.length - 1) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  return user;
+}
+
 // Core processor for any incoming Telegram update
 export async function processTelegramUpdatePayload(update: any): Promise<{ ok: boolean; action?: string; messagesSent?: number; error?: string }> {
   const isCallback = Boolean(update.callback_query);
   const msg = isCallback ? update.callback_query.message : update.message;
   const from = isCallback ? update.callback_query.from : update.message?.from;
-  const rawText = isCallback ? update.callback_query.data : update.message?.text || '';
+  const rawText = isCallback ? update.callback_query.data : update.message?.text || update.message?.caption || '';
   const chatId = msg?.chat?.id || from?.id;
+
+  const incomingPhotos = !isCallback && Array.isArray(update.message?.photo) ? update.message.photo : [];
+  const incomingImageDoc =
+    !isCallback &&
+    update.message?.document &&
+    String(update.message.document.mime_type || '').startsWith('image/')
+      ? update.message.document
+      : null;
+  const hasIncomingReceiptPhoto = incomingPhotos.length > 0 || Boolean(incomingImageDoc);
 
   if (!chatId || !from) {
     return { ok: false, error: 'Falta chatId o emisor (from) en el payload' };
@@ -550,8 +1019,83 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
 
   try {
     const user = await getOrCreateUser(from);
+    if (from.username && (!user.username || user.username.startsWith('user_'))) {
+      user.username = from.username;
+    }
+    const freshName = [from.first_name, from.last_name].filter(Boolean).join(' ').trim();
+    if (freshName && user.name === 'Usuario') {
+      user.name = freshName;
+    }
+
     user.messagesSent = (user.messagesSent || 0) + 1;
     user.lastActivity = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // SPECIAL PATH: Automatic receipt photo reception (Point 5)
+    if (hasIncomingReceiptPhoto) {
+      const largestPhoto = incomingPhotos.length > 0 ? incomingPhotos[incomingPhotos.length - 1] : null;
+      const telegramFileId = String(largestPhoto?.file_id || incomingImageDoc?.file_id || `sim-${Date.now()}`);
+      const receiptUrl = await downloadTelegramPhotoToDisk(
+        telegramFileId,
+        user.telegramId,
+        update.message?._testReceiptUrl
+      );
+
+      const receipt: DepositReceipt = {
+        id: `dep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        telegramId: user.telegramId,
+        userId: user.id,
+        username: user.username || '',
+        name: user.name || 'Usuario',
+        accountId: user.accountId,
+        planId: user.initialPlan,
+        planLabel: user.initialPlanLabel || 'Plan por confirmar',
+        receiptUrl,
+        telegramFileId,
+        caption: update.message?.caption ? String(update.message.caption) : undefined,
+        receivedAt: new Date().toISOString(),
+        status: 'pending',
+      };
+
+      await PostgresService.saveDepositReceipt(receipt);
+      mirrorDepositToFirestore(receipt).catch(() => {});
+
+      await recordMessageInConversation(user.id, {
+        id: `u-${Date.now()}-receipt`,
+        sender: 'user',
+        text: receipt.caption
+          ? `[Comprobante de depósito recibido] ${receipt.caption}`
+          : '[Comprobante de depósito enviado]',
+        timestamp: user.lastActivity,
+        stepTriggered: 'RECEPCION_COMPROBANTE',
+        mediaUrl: receiptUrl,
+        mediaType: 'photo',
+      });
+
+      const receiptResult = handleIncomingReceiptPhoto(user, receipt.id);
+      const updatedUser = receiptResult.updatedUser;
+      await saveUserProgress(updatedUser);
+
+      let sentCount = 0;
+      for (const msgToSend of receiptResult.messagesToSend) {
+        const sendResult = await sendTelegramMessage(chatId, msgToSend.text);
+        if (sendResult.ok) sentCount++;
+        updatedUser.messagesReceived = (updatedUser.messagesReceived || 0) + 1;
+
+        await recordMessageInConversation(updatedUser.id, {
+          id: `b-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          sender: 'bot',
+          text: msgToSend.text,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          stepTriggered: msgToSend.stepTriggered || updatedUser.currentStep,
+        });
+      }
+
+      const latestUser = inMemoryUsers.get(updatedUser.telegramId);
+      if (!latestUser || latestUser.stage === updatedUser.stage) {
+        await saveUserProgress(updatedUser);
+      }
+      return { ok: true, action: receiptResult.recognizedAction, messagesSent: sentCount };
+    }
 
     await recordMessageInConversation(user.id, {
       id: `u-${Date.now()}`,
@@ -586,6 +1130,51 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
 
     let sentCount = 0;
     for (const msgToSend of result.messagesToSend) {
+      // 1. Handle media group (sendMediaGroup album)
+      if (msgToSend.isMediaGroup && msgToSend.mediaGroupItems && msgToSend.mediaGroupItems.length > 0) {
+        const inlineOptions: any = {};
+        if (msgToSend.buttons && msgToSend.buttons.length > 0) {
+          inlineOptions.reply_markup = {
+            inline_keyboard: msgToSend.buttons.map((b) => {
+              if (b.type === 'url') {
+                return [{ text: b.text, url: b.value }];
+              }
+              return [{ text: b.text, callback_data: b.value || b.id }];
+            }),
+          };
+        }
+
+        const hasButtons = Boolean(inlineOptions.reply_markup);
+        const albumCaption =
+          msgToSend.albumCaption ||
+          (!hasButtons && msgToSend.text && msgToSend.text.trim() && msgToSend.text.length <= 1024
+            ? msgToSend.text
+            : undefined);
+
+        await sendTelegramMediaGroup(chatId, msgToSend.mediaGroupItems, albumCaption);
+        sentCount += msgToSend.mediaGroupItems.length;
+
+        if ((msgToSend.text && msgToSend.text.trim() && msgToSend.text !== albumCaption) || hasButtons) {
+          const followUpText = msgToSend.text?.trim() || 'Selecciona una opción para continuar:';
+          const sendResult = await sendTelegramMessage(chatId, followUpText, inlineOptions);
+          if (sendResult.ok) sentCount++;
+        }
+
+        updatedUser.messagesReceived = (updatedUser.messagesReceived || 0) + 1;
+        await recordMessageInConversation(updatedUser.id, {
+          id: `b-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          sender: 'bot',
+          text: [albumCaption, msgToSend.text].filter(Boolean).join('\n\n') || `[Álbum de ${msgToSend.mediaGroupItems.length} archivos]`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          stepTriggered: msgToSend.stepTriggered || updatedUser.currentStep,
+          mediaUrl: msgToSend.mediaGroupItems[0]?.url,
+          mediaType: msgToSend.mediaGroupItems[0]?.type,
+        });
+
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+
       const options: any = {};
 
       if (msgToSend.buttons && msgToSend.buttons.length > 0) {
@@ -602,7 +1191,7 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
       if (msgToSend.mediaUrl) {
         const fullMediaUrl = msgToSend.mediaUrl.startsWith('http')
           ? msgToSend.mediaUrl
-          : `${PUBLIC_BASE_URL}${msgToSend.mediaUrl}`;
+          : `${PUBLIC_BASE_URL}${msgToSend.mediaUrl.startsWith('/') ? '' : '/'}${msgToSend.mediaUrl}`;
 
         if (msgToSend.mediaType === 'video') {
           options.video = fullMediaUrl;
@@ -621,6 +1210,8 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
         text: msgToSend.text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         stepTriggered: msgToSend.stepTriggered || updatedUser.currentStep,
+        mediaUrl: msgToSend.mediaUrl,
+        mediaType: msgToSend.mediaType,
       });
 
       if (result.messagesToSend.length > 1) {
@@ -628,7 +1219,10 @@ export async function processTelegramUpdatePayload(update: any): Promise<{ ok: b
       }
     }
 
-    await saveUserProgress(updatedUser);
+    const latestUser = inMemoryUsers.get(updatedUser.telegramId);
+    if (!latestUser || latestUser.stage === updatedUser.stage) {
+      await saveUserProgress(updatedUser);
+    }
     return { ok: true, action: result.recognizedAction, messagesSent: sentCount };
   } catch (procErr) {
     console.error('[Engine Error] Error procesando actualización de Telegram:', procErr);
@@ -706,7 +1300,7 @@ app.post(['/api/telegram/webhook', '/telegram/webhook'], async (req: Request, re
   try {
     const processPromise = processTelegramUpdatePayload(update);
     const timeoutPromise = new Promise<{ ok: boolean; timeout: boolean }>((resolve) =>
-      setTimeout(() => resolve({ ok: true, timeout: true }), 4200)
+      setTimeout(() => resolve({ ok: true, timeout: true }), 8500)
     );
 
     const result = await Promise.race([processPromise, timeoutPromise]);
@@ -836,6 +1430,598 @@ app.post('/api/general-config', async (req, res) => {
 app.get('/api/conversations', async (_req, res) => {
   const conversations = await PostgresService.getConversations();
   res.json({ success: true, conversations });
+});
+
+// Multer Storage Configuration for Gallery & Device uploads
+const uploadsDir = path.join(rootDir, 'public', 'assets', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const diskStorage = multer.diskStorage({
+  destination: function (_req, _file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (_req, file, cb) {
+    const ext = path.extname(file.originalname) || (file.mimetype.startsWith('video') ? '.mp4' : '.jpeg');
+    const safeName = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+    cb(null, `${safeName}_${Date.now()}${ext}`);
+  },
+});
+
+const uploadMiddleware = multer({
+  storage: diskStorage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit for HD videos
+});
+
+// POST /api/media/upload - Real device/gallery file upload
+app.post('/api/media/upload', uploadMiddleware.single('file'), async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ success: false, error: 'No se recibió ningún archivo.' });
+    }
+
+    const isVideo = file.mimetype.startsWith('video') || file.originalname.endsWith('.mp4') || file.originalname.endsWith('.mov');
+    const mediaType = isVideo ? 'video' : 'photo';
+    const relativeUrl = `/public/assets/uploads/${file.filename}`;
+    const description = req.body.description || `Archivo cargado por Juan Carlos: ${file.originalname}`;
+    const associatedStep = req.body.associatedStep || (isVideo ? 'GUIA_MINES' : 'PRESENTACION');
+    const stageGroup = req.body.stageGroup || 'general';
+
+    const newItem: any = {
+      id: `med-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      name: file.originalname,
+      type: mediaType,
+      url: relativeUrl,
+      description,
+      sizeBytes: file.size,
+      dimensions: isVideo ? undefined : '1080x1920',
+      durationSeconds: isVideo ? 15 : undefined,
+      createdAt: new Date().toISOString(),
+      associatedStep,
+      stageGroup,
+      isRealAsset: true,
+    };
+
+    const existingMedia = await PostgresService.getMedia();
+    await PostgresService.saveMedia([newItem, ...existingMedia]);
+
+    // Mirror to Firestore
+    try {
+      const { doc, setDoc } = await import('firebase/firestore');
+      const { db } = await import('./firebase');
+      await setDoc(doc(db, 'media', newItem.id), newItem);
+    } catch (fsErr) {
+      console.warn('[Firestore Media Sync Warning]:', fsErr);
+    }
+
+    return res.json({
+      success: true,
+      item: newItem,
+      message: 'Archivo cargado y almacenado correctamente.',
+    });
+  } catch (err) {
+    console.error('[Upload Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// Custom Content, Registration Link, Photos & Editable Flow Texts endpoints
+app.get('/api/settings/custom-content', async (_req, res) => {
+  try {
+    const conditions = await PostgresService.getConditions();
+    res.json({
+      success: true,
+      customMinesContentText: conditions.customMinesContentText || DEFAULT_KEYWORD_CONFIG.customMinesContentText,
+      customPlatformReasonText: conditions.customPlatformReasonText || DEFAULT_KEYWORD_CONFIG.customPlatformReasonText,
+      registrationLink: conditions.registrationLink || DEFAULT_REGISTRATION_LINK,
+      registrationPhotoUrls:
+        Array.isArray(conditions.registrationPhotoUrls) && conditions.registrationPhotoUrls.length > 0
+          ? conditions.registrationPhotoUrls
+          : DEFAULT_REGISTRATION_PHOTOS,
+      plansMessageText: conditions.plansMessageText || DEFAULT_PLANS_MESSAGE_TEXT,
+      registrationMessageText: conditions.registrationMessageText || DEFAULT_REGISTRATION_MESSAGE_TEXT,
+      depositPromptText: conditions.depositPromptText || DEFAULT_DEPOSIT_PROMPT_TEXT,
+      approvalMessageText: conditions.approvalMessageText || DEFAULT_APPROVAL_MESSAGE_TEXT,
+      fiveRoundsMessageText: conditions.fiveRoundsMessageText || DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+      scheduledDelayMinutes: conditions.scheduledDelayMinutes ?? 0,
+    });
+  } catch (err) {
+    res.json({
+      success: true,
+      customMinesContentText: DEFAULT_KEYWORD_CONFIG.customMinesContentText,
+      customPlatformReasonText: DEFAULT_KEYWORD_CONFIG.customPlatformReasonText,
+      registrationLink: DEFAULT_REGISTRATION_LINK,
+      registrationPhotoUrls: DEFAULT_REGISTRATION_PHOTOS,
+      plansMessageText: DEFAULT_PLANS_MESSAGE_TEXT,
+      registrationMessageText: DEFAULT_REGISTRATION_MESSAGE_TEXT,
+      depositPromptText: DEFAULT_DEPOSIT_PROMPT_TEXT,
+      approvalMessageText: DEFAULT_APPROVAL_MESSAGE_TEXT,
+      fiveRoundsMessageText: DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+      scheduledDelayMinutes: 0,
+    });
+  }
+});
+
+app.post('/api/settings/custom-content', async (req, res) => {
+  const {
+    customMinesContentText,
+    customPlatformReasonText,
+    registrationLink,
+    registrationPhotoUrls,
+    plansMessageText,
+    registrationMessageText,
+    depositPromptText,
+    approvalMessageText,
+    fiveRoundsMessageText,
+    scheduledDelayMinutes,
+  } = req.body || {};
+
+  try {
+    const currentConditions = await PostgresService.getConditions();
+    const updated: DeterministicKeywordConfig = {
+      ...currentConditions,
+      customMinesContentText:
+        customMinesContentText !== undefined ? customMinesContentText : currentConditions.customMinesContentText,
+      customPlatformReasonText:
+        customPlatformReasonText !== undefined ? customPlatformReasonText : currentConditions.customPlatformReasonText,
+      registrationLink:
+        registrationLink !== undefined && String(registrationLink).trim()
+          ? String(registrationLink).trim()
+          : currentConditions.registrationLink || DEFAULT_REGISTRATION_LINK,
+      registrationPhotoUrls: Array.isArray(registrationPhotoUrls)
+        ? registrationPhotoUrls.filter((u: any) => typeof u === 'string' && u.trim().length > 0)
+        : currentConditions.registrationPhotoUrls || DEFAULT_REGISTRATION_PHOTOS,
+      plansMessageText:
+        plansMessageText !== undefined ? plansMessageText : currentConditions.plansMessageText || DEFAULT_PLANS_MESSAGE_TEXT,
+      registrationMessageText:
+        registrationMessageText !== undefined
+          ? registrationMessageText
+          : currentConditions.registrationMessageText || DEFAULT_REGISTRATION_MESSAGE_TEXT,
+      depositPromptText:
+        depositPromptText !== undefined ? depositPromptText : currentConditions.depositPromptText || DEFAULT_DEPOSIT_PROMPT_TEXT,
+      approvalMessageText:
+        approvalMessageText !== undefined
+          ? approvalMessageText
+          : currentConditions.approvalMessageText || DEFAULT_APPROVAL_MESSAGE_TEXT,
+      fiveRoundsMessageText:
+        fiveRoundsMessageText !== undefined
+          ? fiveRoundsMessageText
+          : currentConditions.fiveRoundsMessageText || DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+      scheduledDelayMinutes:
+        scheduledDelayMinutes !== undefined ? Number(scheduledDelayMinutes) : currentConditions.scheduledDelayMinutes,
+    };
+    await PostgresService.saveConditions(updated);
+    res.json({ success: true, updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ==========================================
+// GESTIÓN DE COMPROBANTES DE DEPÓSITO (PANEL ADMIN)
+// ==========================================
+app.get('/api/deposits', async (_req, res) => {
+  try {
+    const deposits = await PostgresService.getDepositReceipts();
+    res.json({ success: true, count: deposits.length, deposits });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err), deposits: [] });
+  }
+});
+
+app.post('/api/deposits/:depositId/approve', async (req, res) => {
+  const { depositId } = req.params;
+  const { adminId, notes } = req.body || {};
+  const adminName = adminId || 'Juan Carlos';
+
+  try {
+    const receipt = await PostgresService.getDepositReceipt(depositId);
+    if (!receipt) {
+      return res.status(404).json({ success: false, error: 'Comprobante de depósito no encontrado' });
+    }
+
+    const user = await getOrCreateUser({
+      id: receipt.telegramId,
+      first_name: receipt.name || 'Usuario',
+      username: receipt.username,
+    });
+
+    await deliverOrientationMaterialAndUpdateUser(user, adminName, notes, receipt.id);
+    const updatedReceipt = await PostgresService.getDepositReceipt(depositId);
+
+    return res.json({
+      success: true,
+      deposit: updatedReceipt,
+      user,
+      message: 'Depósito verificado y aprobado. Se enviaron la confirmación, las 5 rondas ilustrativas y el video de orientación al usuario.',
+    });
+  } catch (err) {
+    console.error('[Approve Deposit Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+app.post('/api/deposits/:depositId/reject', async (req, res) => {
+  const { depositId } = req.params;
+  const { adminId, reason } = req.body || {};
+  const adminName = adminId || 'Juan Carlos';
+  const cleanReason =
+    (reason && String(reason).trim()) || 'No pudimos validar el comprobante recibido.';
+
+  try {
+    const receipt = await PostgresService.getDepositReceipt(depositId);
+    if (!receipt) {
+      return res.status(404).json({ success: false, error: 'Comprobante de depósito no encontrado' });
+    }
+
+    const updatedReceipt = await PostgresService.updateDepositReceiptStatus(
+      depositId,
+      'rejected',
+      adminName,
+      cleanReason
+    );
+    if (updatedReceipt) {
+      mirrorDepositToFirestore(updatedReceipt).catch(() => {});
+    }
+
+    const user = await getOrCreateUser({
+      id: receipt.telegramId,
+      first_name: receipt.name || 'Usuario',
+      username: receipt.username,
+    });
+
+    const prevStage = user.stage;
+    const nowIso = new Date().toISOString();
+
+    user.paymentStatus = 'payment_rejected';
+    user.stage = 'stage_2_payment_rejected';
+    user.currentStep = 'RECHAZO_PAGO';
+    user.flowStateLabel = 'DEPÓSITO RECHAZADO';
+    user.stageTransitions = user.stageTransitions || [];
+    user.stageTransitions.push(
+      createTransitionRecord(
+        prevStage,
+        'stage_2_payment_rejected',
+        'admin',
+        adminName,
+        `Comprobante rechazado: ${cleanReason}`
+      )
+    );
+
+    await saveUserProgress(user);
+
+    const rejectMsg = `❌ *No pudimos validar tu comprobante de depósito.*\n\nMotivo: _${cleanReason}_\n\nPor favor, verifica la imagen e intenta enviarme nuevamente una captura clara y completa del comprobante para continuar con la verificación.`;
+
+    await sendTelegramMessage(user.telegramId, rejectMsg);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-dep-rej`,
+      sender: 'bot',
+      text: rejectMsg,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'RECHAZO_PAGO',
+    });
+
+    return res.json({
+      success: true,
+      deposit: updatedReceipt,
+      user,
+      message: 'Comprobante rechazado. El acceso sigue bloqueado y se notificó al usuario en Telegram.',
+    });
+  } catch (err) {
+    console.error('[Reject Deposit Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ==========================================
+// ACCIÓN ADMINISTRATIVA: ACEPTAR Y VERIFICAR ID
+// ==========================================
+app.post('/api/users/:telegramId/verify-id', async (req, res) => {
+  const { telegramId } = req.params;
+  const { adminId, notes } = req.body;
+
+  try {
+    const user = await getOrCreateUser({ id: telegramId, first_name: 'Usuario' });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+    }
+
+    const prevStage = user.stage;
+    const nowIso = new Date().toISOString();
+    const adminName = adminId || 'Juan Carlos';
+
+    user.accountStatus = 'verified';
+    user.idVerifiedAt = nowIso;
+    user.idVerifiedBy = adminName;
+    user.stage = 'stage_2_id_verified';
+    user.currentStep = 'stage_2_id_verified';
+    if (notes) user.notes = notes;
+
+    user.stageTransitions = user.stageTransitions || [];
+    user.stageTransitions.push({
+      id: `tr-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      fromStage: prevStage,
+      toStage: 'stage_2_id_verified',
+      timestamp: nowIso,
+      actor: 'admin',
+      adminId: adminName,
+      reason: 'ID aceptado y verificado manualmente desde panel administrativo',
+    });
+
+    await saveUserProgress(user);
+
+    // ==========================================
+    // ETAPA 2 — CONFIRMACIÓN Y CONTENIDO AUTOMÁTICO
+    // ==========================================
+
+    // MENSAJE 1. CONFIRMACIÓN AUTOMÁTICA
+    // Enviar inmediatamente después de aceptar el ID
+    const msg1 = `💎 ¡Tu ID ha sido verificado correctamente!
+
+Ya confirmé tu identificador y quedó registrado en nuestra base de datos.
+
+Ahora ya puedes realizar el depósito correspondiente a tu plan.
+
+¡Gracias por completar esta parte! 🤝`;
+
+    await sendTelegramMessage(telegramId, msg1);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-c1`,
+      sender: 'bot',
+      text: msg1,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'CONFIRMACION_ID',
+    });
+
+    await new Promise((r) => setTimeout(r, 600));
+
+    // MENSAJE 2. CONFIRMACIÓN DEL PLAN
+    const planText = user.initialPlanLabel || 'el plan que seleccionaste';
+    const msg2 = `¡Perfecto! Ya podemos continuar con *${planText}*.
+
+Es momento de realizar tu depósito. Revisa cuidadosamente el importe, las instrucciones de pago y conserva tu comprobante.`;
+
+    await sendTelegramMessage(telegramId, msg2);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-c2`,
+      sender: 'bot',
+      text: msg2,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'CONFIRMACION_PLAN',
+    });
+
+    await new Promise((r) => setTimeout(r, 600));
+
+    // MENSAJE 3. INSTRUCCIONES DE RECARGA (Fotos en orden + único mensaje)
+    await sendTelegramMediaGroup(telegramId, [
+      { type: 'photo', url: '/public/assets/aistudio/IMG_8055_1c7f857b.jpeg' },
+      { type: 'photo', url: '/public/assets/aistudio/IMG_8053_cc818551.jpeg' },
+    ]);
+
+    const msg3 = `💳 *¡ES MOMENTO DE REALIZAR TU DEPÓSITO!*
+
+Ya puedes hacer tu depósito para *${planText}* siguiendo las instrucciones de las imágenes anteriores.
+
+1️⃣ Verifica que los datos del destinatario y el valor sean correctos.
+2️⃣ Conserva la captura o fotografía del comprobante.
+3️⃣ No realices una segunda transferencia si todavía no se ha confirmado la primera.
+
+👇 *Cuando ya hayas realizado tu depósito, pulsa el botón de abajo:*`;
+
+    // MENSAJE 4. USUARIO AVISA QUE DEPOSITÓ (Botón habilitado solo tras verificar ID)
+    const replyMarkup = {
+      inline_keyboard: [
+        [{ text: '💳 YA REALICÉ EL DEPÓSITO', callback_data: 'deposito_realizado' }],
+      ],
+    };
+
+    await sendTelegramMessage(telegramId, msg3, { reply_markup: replyMarkup });
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-c3`,
+      sender: 'bot',
+      text: msg3,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'INSTRUCCIONES_RECARGA',
+    });
+
+    return res.json({
+      success: true,
+      user,
+      message: 'ID verificado exitosamente y Etapa 2 iniciada automáticamente en Telegram.',
+    });
+  } catch (err) {
+    console.error('[Verify ID Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ==========================================
+// ACCIÓN ADMINISTRATIVA: RECHAZAR ID
+// ==========================================
+app.post('/api/users/:telegramId/reject-id', async (req, res) => {
+  const { telegramId } = req.params;
+  const { adminId, reason } = req.body;
+
+  try {
+    const user = await getOrCreateUser({ id: telegramId, first_name: 'Usuario' });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+    }
+
+    const prevStage = user.stage;
+    const nowIso = new Date().toISOString();
+    const adminName = adminId || 'Juan Carlos';
+
+    user.accountStatus = 'rejected';
+    user.idRejectedAt = nowIso;
+    user.idRejectedReason = reason || 'Información no coincide';
+    user.stage = 'stage_1_id_pending';
+    user.currentStep = 'stage_1_id_pending';
+
+    user.stageTransitions = user.stageTransitions || [];
+    user.stageTransitions.push({
+      id: `tr-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      fromStage: prevStage,
+      toStage: 'stage_1_id_pending',
+      timestamp: nowIso,
+      actor: 'admin',
+      adminId: adminName,
+      reason: reason || 'ID rechazado por no concordar con información',
+    });
+
+    await saveUserProgress(user);
+
+    // Mensaje de rechazo al usuario
+    const rejMsg = `No pude confirmar tu ID con la información recibida.\n\nPor favor, revisa los números y envíame nuevamente el identificador correcto.`;
+    await sendTelegramMessage(telegramId, rejMsg);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-rej`,
+      sender: 'bot',
+      text: rejMsg,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'SOLICITUD_ID',
+    });
+
+    return res.json({
+      success: true,
+      user,
+      message: 'ID rechazado y notificación enviada al usuario para que reenvíe el correcto.',
+    });
+  } catch (err) {
+    console.error('[Reject ID Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ==========================================
+// ACCIÓN ADMINISTRATIVA: CONFIRMAR OPERACIÓN / PAGO
+// ==========================================
+app.post('/api/users/:telegramId/verify-payment', async (req, res) => {
+  const { telegramId } = req.params;
+  const { adminId, notes } = req.body || {};
+
+  try {
+    const user = await getOrCreateUser({ id: telegramId, first_name: 'Usuario' });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+    }
+
+    const adminName = adminId || 'Juan Carlos';
+    await deliverOrientationMaterialAndUpdateUser(user, adminName, notes, user.latestDepositId);
+
+    return res.json({
+      success: true,
+      user,
+      message: 'Operación verificada. Se enviaron confirmación, 5 rondas de orientación y video de Mines al usuario.',
+    });
+  } catch (err) {
+    console.error('[Verify Payment Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+app.post('/api/users/:telegramId/reject-payment', async (req, res) => {
+  const { telegramId } = req.params;
+  const { adminId, reason } = req.body || {};
+  const adminName = adminId || 'Juan Carlos';
+  const cleanReason =
+    (reason && String(reason).trim()) || 'No pudimos validar tu comprobante de depósito.';
+
+  try {
+    const user = await getOrCreateUser({ id: telegramId, first_name: 'Usuario' });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+    }
+
+    if (user.latestDepositId) {
+      const updatedReceipt = await PostgresService.updateDepositReceiptStatus(
+        user.latestDepositId,
+        'rejected',
+        adminName,
+        cleanReason
+      );
+      if (updatedReceipt) {
+        mirrorDepositToFirestore(updatedReceipt).catch(() => {});
+      }
+    }
+
+    const prevStage = user.stage;
+    user.paymentStatus = 'payment_rejected';
+    user.stage = 'stage_2_payment_rejected';
+    user.currentStep = 'RECHAZO_PAGO';
+    user.flowStateLabel = 'DEPÓSITO RECHAZADO';
+    user.stageTransitions = user.stageTransitions || [];
+    user.stageTransitions.push(
+      createTransitionRecord(
+        prevStage,
+        'stage_2_payment_rejected',
+        'admin',
+        adminName,
+        `Pago rechazado: ${cleanReason}`
+      )
+    );
+    await saveUserProgress(user);
+
+    const rejectMsg = `❌ *No pudimos validar tu comprobante de depósito.*\n\nMotivo: _${cleanReason}_\n\nPor favor, envíame nuevamente una imagen clara y completa de tu comprobante para revisarlo.`;
+    await sendTelegramMessage(telegramId, rejectMsg);
+    await recordMessageInConversation(user.id, {
+      id: `b-${Date.now()}-pay-rej`,
+      sender: 'bot',
+      text: rejectMsg,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      stepTriggered: 'RECHAZO_PAGO',
+    });
+
+    return res.json({
+      success: true,
+      user,
+      message: 'Depósito rechazado y notificación enviada al usuario.',
+    });
+  } catch (err) {
+    console.error('[Reject Payment Error]:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// REINICIAR ETAPA (Para pruebas del administrador)
+app.post('/api/users/:telegramId/reset-stage', async (req, res) => {
+  const { telegramId } = req.params;
+  try {
+    const user = await getOrCreateUser({ id: telegramId, first_name: 'Usuario' });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+    }
+
+    user.stage = 'stage_1_welcome';
+    user.currentStep = 'stage_1_welcome';
+    user.accountStatus = 'pending_verification';
+    user.paymentStatus = 'unpaid';
+    user.flowStateLabel = 'NUEVO USUARIO';
+    user.latestDepositId = undefined;
+    user.accountId = undefined;
+    user.initialPlan = undefined;
+    user.initialPlanLabel = undefined;
+    user.advancedPlan = undefined;
+    user.advancedPlanLabel = undefined;
+    user.termsAccepted = false;
+    user.stageTransitions = [
+      {
+        id: `tr-reset-${Date.now()}`,
+        fromStage: 'reset',
+        toStage: 'stage_1_welcome',
+        timestamp: new Date().toISOString(),
+        actor: 'admin',
+        reason: 'Reinicio de prueba desde panel administrativo',
+      },
+    ];
+
+    await saveUserProgress(user);
+    res.json({ success: true, user, message: 'Etapa del usuario reiniciada a Etapa 1' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
 });
 
 app.post('/api/users/:telegramId/review', async (req, res) => {

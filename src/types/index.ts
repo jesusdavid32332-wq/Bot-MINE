@@ -1,6 +1,7 @@
 export type SectionId =
   | 'dashboard'
   | 'telegram-connection'
+  | 'deposits'
   | 'messages'
   | 'flow'
   | 'admin-telegram'
@@ -14,10 +15,56 @@ export type SectionId =
   | 'bot-config'
   | 'general-config';
 
+export type FlowStageId =
+  | 'stage_1_welcome'
+  | 'stage_1_country'
+  | 'stage_1_plans'
+  | 'stage_1_registration'
+  | 'stage_1_game_guide'
+  | 'stage_1_id_pending'
+  | 'stage_2_id_verified'
+  | 'stage_2_awaiting_receipt'
+  | 'stage_2_payment_pending'
+  | 'stage_2_payment_verified'
+  | 'stage_2_payment_rejected'
+  | 'stage_2_content_sent'
+  | 'stage_2_practice_completed'
+  | 'stage_3_plans'
+  | 'stage_3_terms_pending'
+  | 'stage_3_completed';
+
 export type FlowStepId =
+  | FlowStageId
   | 'START'
   | 'BIENVENIDA'
   | 'PAIS'
+  | 'EXPLICACION'
+  | 'PLANES_INICIALES'
+  | 'RESPUESTA_PLAN'
+  | 'GUIA_REGISTRO'
+  | 'GUIA_MINES'
+  | 'POR_QUE_PLATAFORMA'
+  | 'COMO_ENCONTRAR_ID'
+  | 'SOLICITUD_ID'
+  | 'ESPERA_VERIFICACION'
+  | 'CONFIRMACION_ID'
+  | 'CONFIRMACION_PLAN'
+  | 'INSTRUCCIONES_RECARGA'
+  | 'AVISO_DEPOSITO'
+  | 'RECEPCION_COMPROBANTE'
+  | 'CONFIRMACION_PAGO'
+  | 'RECHAZO_PAGO'
+  | 'ESPERA_PROGRAMADA'
+  | 'RONDAS_ORIENTACION'
+  | 'CONTENIDO_MINES'
+  | 'VIDEO_MINES'
+  | 'FINALIZACION_ETAPA_2'
+  | 'TRANSICION_ETAPA_3'
+  | 'PLANES_AVANZADOS'
+  | 'SELECCION_AVANZADA'
+  | 'CONDICIONES_COMISION'
+  | 'FIN_RECORRIDO'
+  // Legacy compatibility keys
   | 'PRESENTACION'
   | 'INTERES'
   | 'EXPERIENCIA'
@@ -25,17 +72,70 @@ export type FlowStepId =
   | 'TESTIMONIOS'
   | 'INFO_REGISTRO'
   | 'PREGUNTA_REGISTRO'
-  | 'SOLICITUD_ID'
-  | 'COMO_ENCONTRAR_ID'
   | 'RECEPCION_ID'
   | 'TUTORIAL_MINES'
   | 'FINALIZACION';
 
 export type AccountVerificationStatus =
+  | 'pending_verification'
+  | 'verified'
+  | 'rejected'
+  // Compatibility with previous keys
   | 'id_recibido'
   | 'pendiente_revision'
   | 'revisado'
   | 'no_verificable';
+
+export type PaymentStatus =
+  | 'unpaid'
+  | 'deposit_notified'
+  | 'receipt_pending'
+  | 'payment_verified'
+  | 'payment_rejected';
+
+export type DepositReceiptStatus = 'pending' | 'verified' | 'rejected';
+
+export type UserFlowStateLabel =
+  | 'NUEVO USUARIO'
+  | 'PLAN SELECCIONADO'
+  | 'REGISTRO PENDIENTE'
+  | 'REGISTRO COMPLETADO'
+  | 'COMPROBANTE PENDIENTE'
+  | 'DEPÓSITO VERIFICADO'
+  | 'DEPÓSITO RECHAZADO'
+  | 'ACCESO A ORIENTACIÓN HABILITADO';
+
+export interface DepositReceipt {
+  id: string;
+  telegramId: string;
+  userId: string;
+  username: string;
+  name: string;
+  accountId?: string;
+  planId?: InitialPlanId;
+  planLabel: string;
+  receiptUrl: string;
+  telegramFileId?: string;
+  caption?: string;
+  receivedAt: string;
+  status: DepositReceiptStatus;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
+}
+
+export type InitialPlanId = 'plan_15000' | 'plan_25000' | 'plan_40000';
+export type AdvancedPlanId = 'plan_50000' | 'plan_100000';
+
+export interface StageTransitionRecord {
+  id: string;
+  fromStage: string;
+  toStage: string;
+  timestamp: string;
+  actor: 'user' | 'admin' | 'system';
+  adminId?: string;
+  reason?: string;
+}
 
 export type ContentType =
   | 'text'
@@ -44,7 +144,8 @@ export type ContentType =
   | 'text_buttons'
   | 'photo_buttons'
   | 'video_buttons'
-  | 'photo_group';
+  | 'photo_group'
+  | 'media_group';
 
 export interface TelegramButton {
   id: string;
@@ -69,6 +170,7 @@ export interface AutoMessage {
   isActive: boolean;
   order: number;
   stageTag: string;
+  stageGroup?: 'etapa_1' | 'etapa_2' | 'etapa_3' | 'general';
 }
 
 export interface DeterministicKeywordConfig {
@@ -80,8 +182,20 @@ export interface DeterministicKeywordConfig {
   keywordsNotNow: string[];
   keywordsNeedHelp: string[];
   keywordsAlreadyFoundId: string[];
+  keywordsDepositDone: string[];
+  keywordsPracticeDone: string[];
   idRegex: string;
   unrecognizedFallbackText: string;
+  customMinesContentText?: string;
+  customPlatformReasonText?: string;
+  registrationLink?: string;
+  registrationPhotoUrls?: string[];
+  plansMessageText?: string;
+  registrationMessageText?: string;
+  depositPromptText?: string;
+  approvalMessageText?: string;
+  fiveRoundsMessageText?: string;
+  scheduledDelayMinutes?: number;
 }
 
 export interface MediaItem {
@@ -98,6 +212,8 @@ export interface MediaItem {
   associatedMessageIds?: string[];
   isRealAsset: boolean;
   isDemo?: boolean;
+  stageGroup?: 'etapa_1' | 'etapa_2' | 'etapa_3' | 'general';
+  orderIndex?: number;
 }
 
 export interface Tutorial {
@@ -124,18 +240,38 @@ export interface TelegramUser {
   country: string;
   declaredCountry?: string;
   currentStep: FlowStepId;
-  stage: string;
+  stage: FlowStageId | string;
   lastActivity: string;
   status: 'active' | 'waiting_reply' | 'completed' | 'paused';
   messagesSent: number;
   messagesReceived: number;
-  experienceLevel: 'principiante' | 'experimentado' | 'desconocido';
-  experienceInMines?: boolean;
-  hasRegistered1xBet?: boolean;
+  experienceLevel?: 'principiante' | 'experimentado' | 'desconocido';
   accountId?: string;
   accountStatus: AccountVerificationStatus;
+  initialPlan?: InitialPlanId;
+  initialPlanLabel?: string;
+  paymentStatus?: PaymentStatus;
+  flowStateLabel?: UserFlowStateLabel | string;
+  latestDepositId?: string;
+  depositNotifiedAt?: string;
+  paymentVerifiedAt?: string;
+  paymentVerifiedBy?: string;
+  idVerifiedAt?: string;
+  idVerifiedBy?: string;
+  idRejectedAt?: string;
+  idRejectedReason?: string;
+  practiceCompletedAt?: string;
+  advancedPlan?: AdvancedPlanId;
+  advancedPlanLabel?: string;
+  termsAccepted?: boolean;
+  termsAcceptedAt?: string;
+  termsVersion?: string;
+  stageTransitions?: StageTransitionRecord[];
+  processedUpdateIds?: string[];
   consentGiven: boolean;
   notes?: string;
+  experienceInMines?: boolean;
+  hasRegistered1xBet?: boolean;
 }
 
 export interface ChatMessage {

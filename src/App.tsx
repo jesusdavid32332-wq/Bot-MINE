@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { AccountVerificationStatus, SectionId, TelegramUser } from './types';
+import { AccountVerificationStatus, DepositReceipt, SectionId, TelegramUser } from './types';
 import { StorageService } from './services/storage';
 import { DataService } from './services/dataService';
 import { isErrorObject, safeText, sanitizeUsers, sanitizeConversations } from './utils/safeText';
@@ -16,6 +16,7 @@ import { BotChatSimulatorModal } from './components/ui/BotChatSimulatorModal';
 
 // Section Views
 import { DashboardView } from './components/dashboard/DashboardView';
+import { DepositVerificationView } from './components/deposits/DepositVerificationView';
 import { MessagesView } from './components/messages/MessagesView';
 import { FlowView } from './components/flow/FlowView';
 import { AccountVerificationView } from './components/id-tracking/AccountVerificationView';
@@ -47,6 +48,7 @@ export default function App() {
   const [supportTickets, setSupportTickets] = useState(StorageService.getSupportTickets());
   const [trackedLinks, setTrackedLinks] = useState(StorageService.getTrackedLinks());
   const [generalConfig, setGeneralConfig] = useState(StorageService.getGeneralConfig());
+  const [deposits, setDeposits] = useState<DepositReceipt[]>([]);
 
   // Connect polling/sync with Neon PostgreSQL via DataService
   useEffect(() => {
@@ -62,6 +64,7 @@ export default function App() {
           remoteBotConfig,
           remoteGeneralConfig,
           remoteConvs,
+          remoteDeposits,
         ] = await Promise.allSettled([
           DataService.getUsers(),
           DataService.getMessages(),
@@ -70,6 +73,7 @@ export default function App() {
           DataService.getBotConfig(),
           DataService.getGeneralConfig(),
           DataService.getConversations(),
+          DataService.getDeposits(),
         ]);
 
         if (!isMounted) return;
@@ -94,6 +98,9 @@ export default function App() {
         }
         if (remoteConvs.status === 'fulfilled' && remoteConvs.value && !isErrorObject(remoteConvs.value) && Object.keys(remoteConvs.value).length > 0) {
           setConversations(sanitizeConversations(remoteConvs.value));
+        }
+        if (remoteDeposits.status === 'fulfilled' && Array.isArray(remoteDeposits.value) && !isErrorObject(remoteDeposits.value)) {
+          setDeposits(remoteDeposits.value);
         }
       } catch (err) {
         console.warn('[App] Error sincronizando con base de datos Neon:', err);
@@ -123,6 +130,30 @@ export default function App() {
     setTrackedLinks(StorageService.getTrackedLinks());
     setGeneralConfig(StorageService.getGeneralConfig());
   };
+
+  // Refresh Users, Deposits & Conversations from DB
+  const handleRefreshAll = async () => {
+    try {
+      const [remoteUsers, remoteDeposits, remoteConvs] = await Promise.allSettled([
+        DataService.getUsers(),
+        DataService.getDeposits(),
+        DataService.getConversations(),
+      ]);
+      if (remoteUsers.status === 'fulfilled' && Array.isArray(remoteUsers.value) && !isErrorObject(remoteUsers.value)) {
+        setUsers(sanitizeUsers(remoteUsers.value));
+      }
+      if (remoteDeposits.status === 'fulfilled' && Array.isArray(remoteDeposits.value) && !isErrorObject(remoteDeposits.value)) {
+        setDeposits(remoteDeposits.value);
+      }
+      if (remoteConvs.status === 'fulfilled' && remoteConvs.value && !isErrorObject(remoteConvs.value) && Object.keys(remoteConvs.value).length > 0) {
+        setConversations(sanitizeConversations(remoteConvs.value));
+      }
+    } catch (err) {
+      console.warn('[App] Error actualizando datos:', err);
+    }
+  };
+
+  const handleRefreshUsers = handleRefreshAll;
 
   // Update Account Verification Status
   const handleUpdateUserVerificationStatus = (
@@ -158,6 +189,7 @@ export default function App() {
           usersCount={users.length}
           messagesCount={messages.length}
           trackedIdsCount={users.filter((u) => Boolean(u.accountId)).length}
+          pendingDepositsCount={deposits.filter((d) => d.status === 'pending').length}
         />
 
         {/* Content Viewport */}
@@ -167,6 +199,7 @@ export default function App() {
             currentSection={currentSection}
             onOpenMobile={() => setIsMobileOpen(true)}
             onOpenSimulator={() => setIsSimulatorOpen(true)}
+            onRefreshData={handleRefreshAll}
           />
 
           {/* Page Body Viewport */}
@@ -177,6 +210,15 @@ export default function App() {
                 onSelectUser={handleSelectUserForInspection}
                 onNavigateSection={(sec) => setCurrentSection(sec)}
                 onOpenSimulator={() => setIsSimulatorOpen(true)}
+              />
+            )}
+
+            {currentSection === 'deposits' && (
+              <DepositVerificationView
+                deposits={deposits}
+                users={users}
+                onRefreshAll={handleRefreshAll}
+                onSelectUserForChat={handleSelectUserForInspection}
               />
             )}
 
@@ -192,6 +234,11 @@ export default function App() {
                   setMessages(updated);
                   StorageService.saveMessages(updated);
                 }}
+                onAddMedia={(item) => {
+                  const updated = [item, ...mediaItems];
+                  setMediaItems(updated);
+                  StorageService.saveMediaItems(updated);
+                }}
               />
             )}
 
@@ -201,6 +248,7 @@ export default function App() {
               <AccountVerificationView
                 users={users}
                 onUpdateUserStatus={handleUpdateUserVerificationStatus}
+                onRefreshUsers={handleRefreshUsers}
               />
             )}
 
@@ -246,6 +294,7 @@ export default function App() {
                 users={users}
                 conversations={conversations}
                 onSelectUserForChat={handleSelectUserForInspection}
+                onRefreshUsers={handleRefreshAll}
               />
             )}
 

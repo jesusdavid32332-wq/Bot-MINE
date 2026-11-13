@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { MediaItem } from '../../types';
-import { Modal } from '../ui/Modal';
+import { DataService } from '../../services/dataService';
 import {
   Image as ImageIcon,
   Video,
@@ -15,6 +15,11 @@ import {
   FileText,
   AlertCircle,
   Plus,
+  Play,
+  Smartphone,
+  HardDrive,
+  RefreshCw,
+  FolderOpen,
 } from 'lucide-react';
 
 interface MediaViewProps {
@@ -24,403 +29,471 @@ interface MediaViewProps {
 
 export const MediaView: React.FC<MediaViewProps> = ({ mediaItems, onSaveMedia }) => {
   const [filterType, setFilterType] = useState<'all' | 'photo' | 'video'>('all');
+  const [filterStage, setFilterStage] = useState<'all' | 'etapa_1' | 'etapa_2' | 'etapa_3'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [previewItem, setPreviewItem] = useState<MediaItem | null>(null);
   const [editingItem, setEditingItem] = useState<MediaItem | null>(null);
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [replacingItemId, setReplacingItemId] = useState<string | null>(null);
 
-  // New Media Form State
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemType, setNewItemType] = useState<'photo' | 'video'>('photo');
-  const [newItemDescription, setNewItemDescription] = useState('');
-  const [newItemUrl, setNewItemUrl] = useState('/src/assets/images/mines_board_preview_1794372720270.jpg');
+  // Real Upload States
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSuccessNotice, setUploadSuccessNotice] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
 
   // Filter items
   const filtered = mediaItems.filter((item) => {
     const matchesType = filterType === 'all' || item.type === filterType;
+    const matchesStage =
+      filterStage === 'all' ||
+      item.stageGroup === filterStage ||
+      (!item.stageGroup && filterStage === 'etapa_1');
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesType && matchesSearch;
+    return matchesType && matchesStage && matchesSearch;
   });
 
+  // Handle direct file upload from iPhone, Android or PC with real progress
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    setIsUploading(true);
+    setUploadProgress(10);
+    setUploadSuccessNotice(null);
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('description', `Cargado desde dispositivo: ${file.name}`);
+    formData.append('stageGroup', filterStage === 'all' ? 'etapa_1' : filterStage);
+
+    try {
+      // Use XMLHttpRequest for real upload progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/media/upload');
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 90);
+          setUploadProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        setIsUploading(false);
+        setUploadProgress(100);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.success && data.item) {
+              onSaveMedia([data.item, ...mediaItems]);
+              setUploadSuccessNotice(`✅ Archivo «${file.name}» cargado y almacenado correctamente en el servidor.`);
+              setTimeout(() => setUploadSuccessNotice(null), 6000);
+            } else {
+              setUploadError(data.error || 'Error al guardar el archivo en el servidor.');
+            }
+          } catch (err) {
+            setUploadError('Error decodificando respuesta del servidor.');
+          }
+        } else {
+          setUploadError(`Fallo de subida: Código HTTP ${xhr.status}`);
+        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
+      xhr.onerror = () => {
+        setIsUploading(false);
+        setUploadError('Error de red al subir el archivo desde tu dispositivo.');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
+      xhr.send(formData);
+    } catch (err) {
+      setIsUploading(false);
+      setUploadError(String(err));
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Replace a specific media file
+  const handleTriggerReplace = (item: MediaItem) => {
+    setReplacingItemId(item.id);
+    if (replaceFileInputRef.current) {
+      replaceFileInputRef.current.click();
+    }
+  };
+
+  const handleReplaceFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !replacingItemId) return;
+
+    const file = files[0];
+    setIsUploading(true);
+    setUploadProgress(20);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('description', `Reemplazo de archivo ${replacingItemId}`);
+
+    try {
+      const res = await DataService.uploadMediaFile(formData);
+      setIsUploading(false);
+      setUploadProgress(100);
+      if (res.success && res.item) {
+        const updated = mediaItems.map((m) =>
+          m.id === replacingItemId
+            ? {
+                ...m,
+                name: res.item!.name,
+                url: res.item!.url,
+                sizeBytes: res.item!.sizeBytes,
+                type: res.item!.type,
+              }
+            : m
+        );
+        onSaveMedia(updated);
+        setUploadSuccessNotice(`✅ Archivo reemplazado con éxito por «${file.name}».`);
+        setTimeout(() => setUploadSuccessNotice(null), 5000);
+      } else {
+        alert(res.error || 'Error al reemplazar');
+      }
+    } catch (err) {
+      setIsUploading(false);
+      alert('Error de conexión al reemplazar archivo.');
+    } finally {
+      setReplacingItemId(null);
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
+    }
+  };
+
   const handleDelete = (id: string) => {
-    if (!window.confirm('¿Seguro que deseas eliminar este archivo multimedia?')) return;
+    if (!window.confirm('¿Seguro que deseas eliminar este archivo multimedia de la biblioteca?')) return;
     const updated = mediaItems.filter((item) => item.id !== id);
     onSaveMedia(updated);
   };
 
-  const handleCreateNew = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItemName.trim()) return;
-
-    const newItem: MediaItem = {
-      id: `med-${Date.now().toString().slice(-4)}`,
-      name: newItemName.endsWith('.jpg') || newItemName.endsWith('.mp4') ? newItemName : `${newItemName}.${newItemType === 'photo' ? 'jpg' : 'mp4'}`,
-      type: newItemType,
-      url: newItemUrl,
-      description: newItemDescription,
-      sizeBytes: newItemType === 'photo' ? 450000 : 3800000,
-      dimensions: newItemType === 'photo' ? '1920x1080' : undefined,
-      durationSeconds: newItemType === 'video' ? 30 : undefined,
-      createdAt: new Date().toISOString(),
-      associatedStep: 'INFO_MINES',
-      isRealAsset: false,
-      associatedMessageIds: [],
-      isDemo: true,
-    };
-
-    onSaveMedia([newItem, ...mediaItems]);
-    setIsUploadOpen(false);
-    setNewItemName('');
-    setNewItemDescription('');
-  };
-
-  const handleSaveEdit = () => {
-    if (!editingItem) return;
-    const updated = mediaItems.map((m) => (m.id === editingItem.id ? editingItem : m));
-    onSaveMedia(updated);
-    setEditingItem(null);
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '1.2 MB';
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.round(bytes / 1024)} KB`;
   };
 
   return (
     <div className="space-y-6">
       {/* Top Banner Notice */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-[#0d1629] via-[#0e1c36] to-[#0d1629] border border-sky-500/20 shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="p-5 rounded-2xl bg-gradient-to-r from-[#0d1629] via-[#0e1e3b] to-[#0d1629] border border-sky-500/25 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-white tracking-tight">
-              Biblioteca Multimedia Oficial (Fotografías y Vídeos)
+            <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-sky-400" />
+              Gestor Multimedia de Fotos y Videos de Juan Carlos
             </h2>
-            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-              ARCHIVOS DEMO IDENTIFICADOS
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
+              CARGA DIRECTA DE DISPOSITIVO
             </span>
           </div>
-          <p className="text-xs text-slate-300 mt-0.5">
-            Los archivos registrados aquí están disponibles para ser adjuntados directamente en los mensajes automáticos y tutoriales del bot.
+          <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
+            Selecciona directamente desde la <strong>Galería de tu iPhone</strong>, <strong>Archivos de iPhone</strong>, <strong>Galería Android</strong> o tu <strong>Computador</strong>. Sin requerir enlaces manuales.
           </p>
         </div>
 
-        <button
-          onClick={() => setIsUploadOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/20 transition-all cursor-pointer whitespace-nowrap"
-        >
-          <Upload className="w-4 h-4" />
-          Subir Archivo
-        </button>
+        <div className="flex items-center gap-3">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelected}
+            accept="image/*,video/*"
+            className="hidden"
+          />
+          <input
+            type="file"
+            ref={replaceFileInputRef}
+            onChange={handleReplaceFileSelected}
+            accept="image/*,video/*"
+            className="hidden"
+          />
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-sky-500 hover:bg-sky-400 text-slate-950 shadow-lg shadow-sky-500/20 transition-all cursor-pointer whitespace-nowrap"
+          >
+            <Upload className="w-4 h-4" />
+            {isUploading ? `Subiendo (${uploadProgress}%)...` : 'Subir desde Galería / Archivos'}
+          </button>
+        </div>
       </div>
 
+      {/* Upload Progress Bar Alert */}
+      {isUploading && (
+        <div className="p-4 rounded-xl bg-sky-950/40 border border-sky-500/30 space-y-2">
+          <div className="flex items-center justify-between text-xs text-sky-300 font-semibold">
+            <span>Almacenando archivo en el servidor...</span>
+            <span>{uploadProgress}%</span>
+          </div>
+          <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-sky-400 transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Success / Error Alerts */}
+      {uploadSuccessNotice && (
+        <div className="p-3.5 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 flex items-center justify-between">
+          <span>{uploadSuccessNotice}</span>
+          <button onClick={() => setUploadSuccessNotice(null)} className="text-emerald-400 hover:text-white">✕</button>
+        </div>
+      )}
+
+      {uploadError && (
+        <div className="p-3.5 bg-red-950/60 border border-red-500/40 rounded-xl text-xs text-red-300 flex items-center justify-between">
+          <span>{uploadError}</span>
+          <button onClick={() => setUploadError(null)} className="text-red-400 hover:text-white">✕</button>
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Type Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-[#0c1424] rounded-xl border border-slate-800">
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+        {/* Stages Tabs */}
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#0c1424] rounded-xl border border-slate-800">
           <button
-            onClick={() => setFilterType('all')}
+            onClick={() => setFilterStage('all')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              filterType === 'all'
-                ? 'bg-sky-500/20 text-sky-300 font-semibold'
+              filterStage === 'all'
+                ? 'bg-sky-500/20 text-sky-300 font-bold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Todos ({mediaItems.length})
           </button>
           <button
-            onClick={() => setFilterType('photo')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              filterType === 'photo'
-                ? 'bg-sky-500/20 text-sky-300 font-semibold'
+            onClick={() => setFilterStage('etapa_1')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              filterStage === 'etapa_1'
+                ? 'bg-sky-500/20 text-sky-300 font-bold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <ImageIcon className="w-3.5 h-3.5" />
-            Fotografías ({mediaItems.filter((i) => i.type === 'photo').length})
+            Etapa 1 (Registro & ID)
           </button>
           <button
-            onClick={() => setFilterType('video')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              filterType === 'video'
-                ? 'bg-sky-500/20 text-sky-300 font-semibold'
+            onClick={() => setFilterStage('etapa_2')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              filterStage === 'etapa_2'
+                ? 'bg-sky-500/20 text-sky-300 font-bold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Video className="w-3.5 h-3.5" />
-            Vídeos ({mediaItems.filter((i) => i.type === 'video').length})
+            Etapa 2 (Recarga & Práctica)
+          </button>
+          <button
+            onClick={() => setFilterStage('etapa_3')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              filterStage === 'etapa_3'
+                ? 'bg-sky-500/20 text-sky-300 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Etapa 3 (Acompañamiento)
           </button>
         </div>
 
-        {/* Search Input */}
-        <div className="relative w-full sm:w-72">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por nombre o descripción..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#0c1424] border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-sky-500/50"
-          />
+        {/* Media Type & Search */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 p-1 bg-[#0c1424] rounded-xl border border-slate-800">
+            <button
+              onClick={() => setFilterType('all')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${
+                filterType === 'all' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400'
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setFilterType('photo')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${
+                filterType === 'photo' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400'
+              }`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              Fotos
+            </button>
+            <button
+              onClick={() => setFilterType('video')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${
+                filterType === 'video' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400'
+              }`}
+            >
+              <Video className="w-3.5 h-3.5" />
+              Videos
+            </button>
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar archivo..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-[#0c1424] border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Media Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {/* Media Grid Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {filtered.map((item) => (
           <div
             key={item.id}
-            className="rounded-2xl bg-[#0c1424] border border-slate-800 overflow-hidden group hover:border-slate-700 transition-all flex flex-col justify-between"
+            className="group bg-[#0c1424] border border-slate-800/80 hover:border-sky-500/40 rounded-2xl overflow-hidden shadow-lg transition-all flex flex-col"
           >
-            <div>
-              {/* Thumbnail Container */}
-              <div
-                className="relative aspect-video bg-black/50 overflow-hidden cursor-pointer"
-                onClick={() => setPreviewItem(item)}
-              >
-                <img
-                  src={item.url}
-                  alt={item.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  referrerPolicy="no-referrer"
-                />
-
-                <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/60 text-white backdrop-blur-sm uppercase flex items-center gap-1">
-                    {item.type === 'video' ? <Video className="w-3 h-3 text-sky-400" /> : <ImageIcon className="w-3 h-3 text-amber-400" />}
-                    {item.type}
+            {/* Thumbnail Viewport */}
+            <div
+              onClick={() => setPreviewItem(item)}
+              className="relative aspect-video bg-black/60 flex items-center justify-center cursor-pointer overflow-hidden group-hover:opacity-95 transition-opacity"
+            >
+              {item.type === 'video' ? (
+                <>
+                  <video
+                    src={item.url}
+                    className="w-full h-full object-cover"
+                    preload="metadata"
+                  />
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-full bg-sky-500/90 text-slate-950 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                      <Play className="w-5 h-5 fill-current ml-0.5" />
+                    </div>
+                  </div>
+                  <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 font-mono text-[10px] text-sky-300 font-bold">
+                    VIDEO
                   </span>
-                  {item.isDemo && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/80 text-black font-bold">
-                      DEMO
-                    </span>
-                  )}
-                </div>
-
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPreviewItem(item);
-                    }}
-                    className="p-2 rounded-xl bg-white/20 text-white backdrop-blur-md hover:bg-white/30 transition-colors"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingItem(item);
-                    }}
-                    className="p-2 rounded-xl bg-white/20 text-white backdrop-blur-md hover:bg-white/30 transition-colors"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Meta details */}
-              <div className="p-3.5 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <h4 className="text-xs font-bold text-white truncate flex-1" title={item.name}>
-                    {item.name}
-                  </h4>
-                  <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                    {(item.sizeBytes / 1024).toFixed(0)} KB
+                </>
+              ) : (
+                <>
+                  <img
+                    src={item.url}
+                    alt={item.name}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    loading="lazy"
+                  />
+                  <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 font-mono text-[10px] text-emerald-300 font-bold">
+                    FOTO
                   </span>
-                </div>
-
-                <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed">
-                  {item.description}
-                </p>
-
-                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
-                  <span>
-                    Asociado a: {item.associatedMessageIds?.length || 0} mensaje(s)
-                  </span>
-                  <span>{item.dimensions || `${item.durationSeconds || 0}s`}</span>
-                </div>
-              </div>
+                </>
+              )}
             </div>
 
-            {/* Footer row actions */}
-            <div className="p-2 bg-slate-900/60 border-t border-slate-800/80 flex items-center justify-between text-xs">
-              <button
-                onClick={() => setEditingItem(item)}
-                className="text-slate-400 hover:text-sky-300 p-1 flex items-center gap-1 text-[11px]"
-              >
-                <Edit2 className="w-3 h-3" />
-                Editar
-              </button>
-              <button
-                onClick={() => handleDelete(item.id)}
-                className="text-red-400/70 hover:text-red-300 p-1 flex items-center gap-1 text-[11px]"
-              >
-                <Trash2 className="w-3 h-3" />
-                Eliminar
-              </button>
+            {/* Content Details */}
+            <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2">
+              <div>
+                <h4 className="text-xs font-bold text-white truncate" title={item.name}>
+                  {item.name}
+                </h4>
+                <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
+                  {item.description || 'Sin descripción'}
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <span>{formatFileSize(item.sizeBytes)}</span>
+                <span className="text-sky-400 uppercase font-semibold">
+                  {item.stageGroup || item.associatedStep}
+                </span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPreviewItem(item)}
+                  className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                >
+                  <Eye className="w-3 h-3" />
+                  Ver
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleTriggerReplace(item)}
+                  title="Reemplazar archivo desde galería"
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-sky-600 hover:text-white text-slate-300 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDelete(item.id)}
+                  title="Eliminar de la biblioteca"
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-500/30 hover:text-red-300 text-slate-400 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Preview Lightbox Modal */}
+      {/* Preview Modal for Photos and Videos */}
       {previewItem && (
-        <Modal
-          isOpen={true}
-          onClose={() => setPreviewItem(null)}
-          title={`Vista Previa: ${previewItem.name}`}
-          subtitle={`${previewItem.type.toUpperCase()} · ${previewItem.dimensions || ''}`}
-          maxWidth="max-w-4xl"
-        >
-          <div className="space-y-4">
-            <div className="rounded-xl overflow-hidden bg-black flex items-center justify-center max-h-[60vh] border border-slate-800">
-              <img
-                src={previewItem.url}
-                alt={previewItem.name}
-                className="w-full h-auto max-h-[60vh] object-contain"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300 space-y-1">
-              <p><strong>Descripción:</strong> {previewItem.description}</p>
-              <p className="font-mono text-[11px] text-slate-400">
-                Ruta física de activo: {previewItem.url}
-              </p>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Edit Media Modal */}
-      {editingItem && (
-        <Modal
-          isOpen={true}
-          onClose={() => setEditingItem(null)}
-          title="Editar Detalles de Archivo Multimedia"
-          maxWidth="max-w-lg"
-        >
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Nombre del Archivo</label>
-              <input
-                type="text"
-                value={editingItem.name}
-                onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
-                className="w-full bg-[#080d1a] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Descripción</label>
-              <textarea
-                rows={3}
-                value={editingItem.description}
-                onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
-                className="w-full bg-[#080d1a] border border-slate-700 rounded-xl p-3 text-xs text-white"
-              />
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-              <button
-                onClick={() => setEditingItem(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white"
-              >
-                Guardar Cambios
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Upload New Item Modal */}
-      {isUploadOpen && (
-        <Modal
-          isOpen={true}
-          onClose={() => setIsUploadOpen(false)}
-          title="Subir Nuevo Archivo Multimedia a la Biblioteca"
-          subtitle="Formato DEMO con previsualización inmediata para el bot de Telegram"
-          maxWidth="max-w-lg"
-        >
-          <form onSubmit={handleCreateNew} className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Nombre del Archivo
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="ej. tutorial_retiros_1xbet.jpg"
-                value={newItemName}
-                onChange={(e) => setNewItemName(e.target.value)}
-                className="w-full bg-[#080d1a] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-2xl bg-[#0c1424] border border-sky-500/30 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Tipo de Archivo</label>
-                <select
-                  value={newItemType}
-                  onChange={(e) => setNewItemType(e.target.value as 'photo' | 'video')}
-                  className="w-full bg-[#080d1a] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
-                >
-                  <option value="photo">Fotografía (JPG / PNG)</option>
-                  <option value="video">Vídeo (MP4)</option>
-                </select>
+                <span className="text-[10px] font-mono text-sky-400 font-bold uppercase">
+                  Vista Previa en Tiempo Real
+                </span>
+                <h3 className="text-sm font-bold text-white truncate max-w-md">{previewItem.name}</h3>
               </div>
+              <button
+                onClick={() => setPreviewItem(null)}
+                className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded bg-slate-800"
+              >
+                Cerrar
+              </button>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Activo Demo Asignado</label>
-                <select
-                  value={newItemUrl}
-                  onChange={(e) => setNewItemUrl(e.target.value)}
-                  className="w-full bg-[#080d1a] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                >
-                  <option value="/src/assets/images/mines_board_preview_1794372720270.jpg">
-                    mines_board_preview.jpg
-                  </option>
-                  <option value="/src/assets/images/tutorial_mines_guide_1794372721064.jpg">
-                    tutorial_mines_guide.jpg
-                  </option>
-                  <option value="/src/assets/images/juan_carlos_avatar_1794372721304.jpg">
-                    juan_carlos_avatar.jpg
-                  </option>
-                </select>
+            <div className="p-4 bg-black/80 flex items-center justify-center max-h-[60vh] overflow-hidden">
+              {previewItem.type === 'video' ? (
+                <video
+                  src={previewItem.url}
+                  controls
+                  autoPlay
+                  className="max-h-[55vh] max-w-full rounded-xl"
+                />
+              ) : (
+                <img
+                  src={previewItem.url}
+                  alt={previewItem.name}
+                  className="max-h-[55vh] max-w-full object-contain rounded-xl"
+                />
+              )}
+            </div>
+
+            <div className="p-4 bg-[#09101d] border-t border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between text-slate-300 font-mono text-[11px]">
+                <span>Tipo: {previewItem.type === 'video' ? 'Video MP4 / MOV' : 'Fotografía JPEG'}</span>
+                <span>Tamaño: {formatFileSize(previewItem.sizeBytes)}</span>
+              </div>
+              <p className="text-slate-400 text-xs">{previewItem.description}</p>
+              <div className="text-[11px] font-mono text-slate-500 truncate">
+                Ruta local: {previewItem.url}
               </div>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Descripción del Archivo</label>
-              <textarea
-                rows={3}
-                placeholder="Indica qué muestra el archivo y para qué mensaje o tutorial se usará..."
-                value={newItemDescription}
-                onChange={(e) => setNewItemDescription(e.target.value)}
-                className="w-full bg-[#080d1a] border border-slate-700 rounded-xl p-3 text-xs text-white"
-              />
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={() => setIsUploadOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white"
-              >
-                Registrar Archivo
-              </button>
-            </div>
-          </form>
-        </Modal>
+          </div>
+        </div>
       )}
     </div>
   );

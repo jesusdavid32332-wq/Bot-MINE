@@ -3,6 +3,7 @@
 import {
   AutoMessage,
   BotConfig,
+  DepositReceipt,
   DeterministicKeywordConfig,
   GeneralConfig,
   MediaItem,
@@ -16,7 +17,16 @@ import {
   INITIAL_MEDIA_ITEMS,
   INITIAL_MESSAGES,
 } from './mockData';
-import { DEFAULT_KEYWORD_CONFIG } from './deterministicBotEngine';
+import {
+  DEFAULT_APPROVAL_MESSAGE_TEXT,
+  DEFAULT_DEPOSIT_PROMPT_TEXT,
+  DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+  DEFAULT_KEYWORD_CONFIG,
+  DEFAULT_PLANS_MESSAGE_TEXT,
+  DEFAULT_REGISTRATION_LINK,
+  DEFAULT_REGISTRATION_MESSAGE_TEXT,
+  DEFAULT_REGISTRATION_PHOTOS,
+} from './deterministicBotEngine';
 import { isErrorObject, sanitizeConversations, sanitizeUsers } from '../utils/safeText';
 
 async function safeFetch<T>(url: string, options?: RequestInit, fallback?: T): Promise<T> {
@@ -69,6 +79,205 @@ export const DataService = {
       });
     } catch (e) {
       console.warn('[DataService] Error actualizando estado de usuario:', e);
+    }
+  },
+
+  // ADMINISTRATIVE TRANSITIONS FOR THE 3-STAGE FLOW
+  async verifyUserId(telegramId: string, adminId: string = 'Juan Carlos', notes?: string): Promise<{ success: boolean; user?: TelegramUser; message?: string }> {
+    try {
+      const res = await fetch(`/api/users/${telegramId}/verify-id`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, notes }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error verificando ID:', err);
+      return { success: false, message: String(err) };
+    }
+  },
+
+  async rejectUserId(telegramId: string, adminId: string = 'Juan Carlos', reason?: string): Promise<{ success: boolean; user?: TelegramUser; message?: string }> {
+    try {
+      const res = await fetch(`/api/users/${telegramId}/reject-id`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, reason }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error rechazando ID:', err);
+      return { success: false, message: String(err) };
+    }
+  },
+
+  async verifyUserPayment(telegramId: string, adminId: string = 'Juan Carlos', notes?: string): Promise<{ success: boolean; user?: TelegramUser; message?: string }> {
+    try {
+      const res = await fetch(`/api/users/${telegramId}/verify-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, notes }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error verificando pago:', err);
+      return { success: false, message: String(err) };
+    }
+  },
+
+  async rejectUserPayment(telegramId: string, adminId: string = 'Juan Carlos', reason?: string): Promise<{ success: boolean; user?: TelegramUser; message?: string }> {
+    try {
+      const res = await fetch(`/api/users/${telegramId}/reject-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, reason }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error rechazando pago:', err);
+      return { success: false, message: String(err) };
+    }
+  },
+
+  // DEPOSIT RECEIPTS (Comprobantes de Depósito)
+  async getDeposits(): Promise<DepositReceipt[]> {
+    try {
+      const res = await safeFetch<{ success: boolean; deposits?: DepositReceipt[] }>('/api/deposits');
+      return res && Array.isArray(res.deposits) ? res.deposits : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async approveDeposit(
+    depositId: string,
+    adminId: string = 'Juan Carlos',
+    notes?: string
+  ): Promise<{ success: boolean; deposit?: DepositReceipt; user?: TelegramUser; message?: string; error?: string }> {
+    try {
+      const res = await fetch(`/api/deposits/${depositId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, notes }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error aprobando comprobante:', err);
+      return { success: false, error: String(err) };
+    }
+  },
+
+  async rejectDeposit(
+    depositId: string,
+    adminId: string = 'Juan Carlos',
+    reason?: string
+  ): Promise<{ success: boolean; deposit?: DepositReceipt; user?: TelegramUser; message?: string; error?: string }> {
+    try {
+      const res = await fetch(`/api/deposits/${depositId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId, reason }),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error rechazando comprobante:', err);
+      return { success: false, error: String(err) };
+    }
+  },
+
+  async resetUserStage(telegramId: string): Promise<{ success: boolean; user?: TelegramUser }> {
+    try {
+      const res = await fetch(`/api/users/${telegramId}/reset-stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error reiniciando etapa:', err);
+      return { success: false };
+    }
+  },
+
+  // MEDIA UPLOAD FROM DEVICE/GALLERY
+  async uploadMediaFile(formData: FormData): Promise<{ success: boolean; item?: MediaItem; message?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/media/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      return await res.json();
+    } catch (err) {
+      console.error('[DataService] Error subiendo archivo:', err);
+      return { success: false, error: String(err) };
+    }
+  },
+
+  // CUSTOM CONTENT, REGISTRATION LINK, PHOTOS & EDITABLE FLOW MESSAGES
+  async getCustomContent(): Promise<{
+    customMinesContentText: string;
+    customPlatformReasonText: string;
+    registrationLink: string;
+    registrationPhotoUrls: string[];
+    plansMessageText: string;
+    registrationMessageText: string;
+    depositPromptText: string;
+    approvalMessageText: string;
+    fiveRoundsMessageText: string;
+    scheduledDelayMinutes: number;
+  }> {
+    try {
+      const res = await safeFetch<any>('/api/settings/custom-content');
+      return {
+        customMinesContentText: res.customMinesContentText || DEFAULT_KEYWORD_CONFIG.customMinesContentText || '',
+        customPlatformReasonText: res.customPlatformReasonText || DEFAULT_KEYWORD_CONFIG.customPlatformReasonText || '',
+        registrationLink: res.registrationLink || DEFAULT_REGISTRATION_LINK,
+        registrationPhotoUrls:
+          Array.isArray(res.registrationPhotoUrls) && res.registrationPhotoUrls.length > 0
+            ? res.registrationPhotoUrls
+            : DEFAULT_REGISTRATION_PHOTOS,
+        plansMessageText: res.plansMessageText || DEFAULT_PLANS_MESSAGE_TEXT,
+        registrationMessageText: res.registrationMessageText || DEFAULT_REGISTRATION_MESSAGE_TEXT,
+        depositPromptText: res.depositPromptText || DEFAULT_DEPOSIT_PROMPT_TEXT,
+        approvalMessageText: res.approvalMessageText || DEFAULT_APPROVAL_MESSAGE_TEXT,
+        fiveRoundsMessageText: res.fiveRoundsMessageText || DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+        scheduledDelayMinutes: res.scheduledDelayMinutes ?? 0,
+      };
+    } catch {
+      return {
+        customMinesContentText: DEFAULT_KEYWORD_CONFIG.customMinesContentText || '',
+        customPlatformReasonText: DEFAULT_KEYWORD_CONFIG.customPlatformReasonText || '',
+        registrationLink: DEFAULT_REGISTRATION_LINK,
+        registrationPhotoUrls: DEFAULT_REGISTRATION_PHOTOS,
+        plansMessageText: DEFAULT_PLANS_MESSAGE_TEXT,
+        registrationMessageText: DEFAULT_REGISTRATION_MESSAGE_TEXT,
+        depositPromptText: DEFAULT_DEPOSIT_PROMPT_TEXT,
+        approvalMessageText: DEFAULT_APPROVAL_MESSAGE_TEXT,
+        fiveRoundsMessageText: DEFAULT_FIVE_ROUNDS_MESSAGE_TEXT,
+        scheduledDelayMinutes: 0,
+      };
+    }
+  },
+
+  async saveCustomContent(payload: {
+    customMinesContentText?: string;
+    customPlatformReasonText?: string;
+    registrationLink?: string;
+    registrationPhotoUrls?: string[];
+    plansMessageText?: string;
+    registrationMessageText?: string;
+    depositPromptText?: string;
+    approvalMessageText?: string;
+    fiveRoundsMessageText?: string;
+    scheduledDelayMinutes?: number;
+  }): Promise<void> {
+    try {
+      await fetch('/api/settings/custom-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.error('[DataService] Error guardando contenido personalizado:', err);
     }
   },
 
@@ -201,3 +410,5 @@ export const DataService = {
     }
   },
 };
+
+export const dataService = DataService;

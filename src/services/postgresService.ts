@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import {
   AutoMessage,
   BotConfig,
+  DepositReceipt,
+  DepositReceiptStatus,
   DeterministicKeywordConfig,
   GeneralConfig,
   MediaItem,
@@ -37,6 +39,7 @@ class MemoryStorageStore {
   tutorials = new Map<string, Tutorial>();
   trackedLinks = new Map<string, TrackedLink>();
   supportTickets = new Map<string, SupportTicket>();
+  deposits = new Map<string, DepositReceipt>();
   processedUpdates = new Set<string>();
 
   constructor() {
@@ -182,6 +185,27 @@ export const PostgresService = {
         );
       `;
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS deposit_receipts (
+            id VARCHAR(64) PRIMARY KEY,
+            telegram_id VARCHAR(64) NOT NULL,
+            user_id VARCHAR(64),
+            username VARCHAR(255),
+            name VARCHAR(255),
+            plan_id VARCHAR(64),
+            plan_label VARCHAR(255),
+            receipt_url TEXT NOT NULL,
+            telegram_file_id TEXT,
+            status VARCHAR(32) NOT NULL DEFAULT 'pending',
+            reviewed_by VARCHAR(255),
+            reviewed_at TIMESTAMPTZ,
+            rejection_reason TEXT,
+            raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+
       // Seed messages if empty
       const existingMsgs = await sql`SELECT id FROM messages LIMIT 1;`;
       if (existingMsgs.length === 0) {
@@ -219,7 +243,7 @@ export const PostgresService = {
         `;
       }
 
-      // Seed media if empty
+      // Seed media if empty & sync official Mines AI assets
       const existingMedia = await sql`SELECT id FROM media_items LIMIT 1;`;
       if (existingMedia.length === 0) {
         for (const media of INITIAL_MEDIA_ITEMS) {
@@ -229,6 +253,32 @@ export const PostgresService = {
             ON CONFLICT (id) DO NOTHING;
           `;
         }
+      } else {
+        const coreMediaIds = new Set([
+          'med-bienvenida-mines',
+          'med-reg-paso-1',
+          'med-reg-paso-2',
+          'med-reg-paso-3',
+          'med-reg-paso-4',
+          'med-reg-paso-5',
+          'med-reg-paso-6',
+          'med-video-como-encontrar-mines',
+        ]);
+        for (const media of INITIAL_MEDIA_ITEMS.filter((m) => coreMediaIds.has(m.id))) {
+          await sql`
+            INSERT INTO media_items (id, name, type, url, description, associated_step, raw_data)
+            VALUES (${media.id}, ${media.name}, ${media.type}, ${media.url}, ${media.description || ''}, ${media.associatedStep || null}, ${JSON.stringify(media)})
+            ON CONFLICT (id) DO UPDATE SET
+              name = EXCLUDED.name,
+              type = EXCLUDED.type,
+              url = EXCLUDED.url,
+              description = EXCLUDED.description,
+              associated_step = EXCLUDED.associated_step,
+              raw_data = EXCLUDED.raw_data,
+              updated_at = CURRENT_TIMESTAMP;
+          `;
+        }
+        await sql`DELETE FROM media_items WHERE id = 'med-paris-presentacion';`;
       }
 
       isDbInitialized = true;
@@ -522,17 +572,17 @@ export const PostgresService = {
   // CONDITIONS
   async getConditions(): Promise<DeterministicKeywordConfig> {
     const sql = getSql();
-    if (!sql) return memoryStore.conditions.get('default') || DEFAULT_KEYWORD_CONFIG;
+    if (!sql) return { ...DEFAULT_KEYWORD_CONFIG, ...(memoryStore.conditions.get('default') || {}) };
     try {
       await this.ensureSchema();
       const rows = await sql`SELECT raw_data FROM conditions WHERE id = 'default' LIMIT 1;`;
       if (rows.length > 0 && rows[0].raw_data) {
-        return rows[0].raw_data as DeterministicKeywordConfig;
+        return { ...DEFAULT_KEYWORD_CONFIG, ...(rows[0].raw_data as Partial<DeterministicKeywordConfig>) };
       }
       return DEFAULT_KEYWORD_CONFIG;
     } catch (err) {
       console.warn('[PostgresService] Error obteniendo condiciones:', err);
-      return memoryStore.conditions.get('default') || DEFAULT_KEYWORD_CONFIG;
+      return { ...DEFAULT_KEYWORD_CONFIG, ...(memoryStore.conditions.get('default') || {}) };
     }
   },
 
@@ -735,5 +785,133 @@ export const PostgresService = {
     } catch (err) {
       console.warn('[PostgresService] Error marcando update_id como procesado:', err);
     }
+  },
+
+  // DEPOSIT RECEIPTS (Comprobantes de Depósito)
+  async getDepositReceipts(): Promise<DepositReceipt[]> {
+    const memList = Array.from(memoryStore.deposits.values()).sort(
+      (a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
+    );
+    const sql = getSql();
+    if (!sql) return memList;
+    try {
+      await this.ensureSchema();
+      const rows = await sql`SELECT * FROM deposit_receipts ORDER BY received_at DESC;`;
+      if (rows.length === 0) return memList;
+      const mapped = rows.map((r: any) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          telegramId: r.telegram_id,
+          userId: r.user_id || `usr-${r.telegram_id}`,
+          username: r.username || '',
+          name: r.name || 'Usuario',
+          planId: r.plan_id || raw.planId,
+          planLabel: r.plan_label || raw.planLabel || 'Plan no especificado',
+          receiptUrl: r.receipt_url,
+          telegramFileId: r.telegram_file_id || raw.telegramFileId,
+          receivedAt: raw.receivedAt || (r.received_at ? new Date(r.received_at).toISOString() : new Date().toISOString()),
+          status: (r.status || 'pending') as DepositReceiptStatus,
+          reviewedBy: r.reviewed_by || raw.reviewedBy,
+          reviewedAt: r.reviewed_at ? new Date(r.reviewed_at).toISOString() : raw.reviewedAt,
+          rejectionReason: r.rejection_reason || raw.rejectionReason,
+        } as DepositReceipt;
+      });
+      mapped.forEach((d) => memoryStore.deposits.set(d.id, d));
+      return mapped;
+    } catch (err) {
+      console.warn('[PostgresService] Error obteniendo comprobantes:', err);
+      return memList;
+    }
+  },
+
+  async getDepositReceipt(id: string): Promise<DepositReceipt | null> {
+    const memItem = memoryStore.deposits.get(id);
+    const sql = getSql();
+    if (!sql) return memItem || null;
+    try {
+      await this.ensureSchema();
+      const rows = await sql`SELECT * FROM deposit_receipts WHERE id = ${id} LIMIT 1;`;
+      if (rows.length === 0) return memItem || null;
+      const r = rows[0];
+      const raw = r.raw_data || {};
+      const mapped: DepositReceipt = {
+        ...raw,
+        id: r.id,
+        telegramId: r.telegram_id,
+        userId: r.user_id || `usr-${r.telegram_id}`,
+        username: r.username || '',
+        name: r.name || 'Usuario',
+        planId: r.plan_id || raw.planId,
+        planLabel: r.plan_label || raw.planLabel || 'Plan no especificado',
+        receiptUrl: r.receipt_url,
+        telegramFileId: r.telegram_file_id || raw.telegramFileId,
+        receivedAt: raw.receivedAt || (r.received_at ? new Date(r.received_at).toISOString() : new Date().toISOString()),
+        status: (r.status || 'pending') as DepositReceiptStatus,
+        reviewedBy: r.reviewed_by || raw.reviewedBy,
+        reviewedAt: r.reviewed_at ? new Date(r.reviewed_at).toISOString() : raw.reviewedAt,
+        rejectionReason: r.rejection_reason || raw.rejectionReason,
+      };
+      memoryStore.deposits.set(mapped.id, mapped);
+      return mapped;
+    } catch (err) {
+      console.warn('[PostgresService] Error obteniendo comprobante:', err);
+      return memItem || null;
+    }
+  },
+
+  async saveDepositReceipt(receipt: DepositReceipt): Promise<void> {
+    memoryStore.deposits.set(receipt.id, receipt);
+    const sql = getSql();
+    if (!sql) return;
+    try {
+      await this.ensureSchema();
+      await sql`
+        INSERT INTO deposit_receipts (
+          id, telegram_id, user_id, username, name, plan_id, plan_label,
+          receipt_url, telegram_file_id, status, reviewed_by, reviewed_at,
+          rejection_reason, raw_data, received_at, updated_at
+        ) VALUES (
+          ${receipt.id}, ${receipt.telegramId}, ${receipt.userId || `usr-${receipt.telegramId}`},
+          ${receipt.username || ''}, ${receipt.name || 'Usuario'}, ${receipt.planId || null},
+          ${receipt.planLabel || 'Plan no especificado'}, ${receipt.receiptUrl},
+          ${receipt.telegramFileId || null}, ${receipt.status || 'pending'},
+          ${receipt.reviewedBy || null}, ${receipt.reviewedAt || null},
+          ${receipt.rejectionReason || null}, ${JSON.stringify(receipt)},
+          ${receipt.receivedAt || new Date().toISOString()}, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          reviewed_by = EXCLUDED.reviewed_by,
+          reviewed_at = EXCLUDED.reviewed_at,
+          rejection_reason = EXCLUDED.rejection_reason,
+          receipt_url = EXCLUDED.receipt_url,
+          raw_data = EXCLUDED.raw_data,
+          updated_at = CURRENT_TIMESTAMP;
+      `;
+    } catch (err) {
+      console.warn('[PostgresService] Error guardando comprobante:', err);
+    }
+  },
+
+  async updateDepositReceiptStatus(
+    id: string,
+    status: DepositReceiptStatus,
+    reviewedBy: string,
+    rejectionReason?: string
+  ): Promise<DepositReceipt | null> {
+    const existing = await this.getDepositReceipt(id);
+    if (!existing) return null;
+    const nowIso = new Date().toISOString();
+    const updated: DepositReceipt = {
+      ...existing,
+      status,
+      reviewedBy,
+      reviewedAt: nowIso,
+      rejectionReason: status === 'rejected' ? rejectionReason || existing.rejectionReason : undefined,
+    };
+    await this.saveDepositReceipt(updated);
+    return updated;
   },
 };

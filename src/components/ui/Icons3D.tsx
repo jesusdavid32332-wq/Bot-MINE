@@ -598,3 +598,39 @@ export const TelegramConnectIcon3D: React.FC<Icon3DProps> = ({ className = '', s
   </svg>
 );
 
+// 16. DEPÓSITOS Y COMPROBANTES 3D ICON (Gold & Emerald 3D Vault Card with Check Badge)
+export const DepositsIcon3D: React.FC<Icon3DProps> = ({ className = '', size = 20 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 32 32"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`shrink-0 overflow-visible transition-transform duration-200 group-hover:scale-105 ${className}`}
+  >
+    <ellipse cx="16" cy="27" rx="11" ry="3" fill="#000000" fillOpacity="0.45" />
+    <rect
+      x="4"
+      y="7"
+      width="24"
+      height="16"
+      rx="3.5"
+      fill="url(#obsidianGlass)"
+      stroke="url(#goldGrad3D)"
+      strokeWidth="1.4"
+      filter="url(#shadow3D)"
+    />
+    <rect x="4" y="11" width="24" height="3.5" fill="url(#goldGrad3D)" fillOpacity="0.35" />
+    <rect x="7" y="17" width="8" height="2.2" rx="1.1" fill="url(#cyanGrad3D)" />
+    <circle cx="23.5" cy="18.5" r="5" fill="url(#emeraldGrad3D)" filter="url(#shadow3D)" />
+    <path
+      d="M21.3 18.5L22.8 20L25.8 17"
+      stroke="#ffffff"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+

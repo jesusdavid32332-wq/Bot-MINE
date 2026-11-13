@@ -38,7 +38,7 @@ Primero quiero conocerte un poquito.
 
 *¿De qué país nos escribes?* 🌎`,
     contentType: 'photo_buttons',
-    mediaUrl: '/public/assets/aistudio/IMG_7992_53256945.jpeg',
+    mediaUrl: '/public/assets/aistudio/IMG_8043_1305f354.jpeg',
     mediaType: 'photo',
     buttons: [
       { id: 'btn-co', text: '🇨🇴 Colombia', type: 'callback', value: 'pais_colombia' },
@@ -92,7 +92,7 @@ Aquí encontrarás explicaciones del juego, información sobre el tablero de 5×
 
 ⚠️ *No prometemos ganancias ni resultados seguros. Los resultados de Mines dependen del azar.*`,
     contentType: 'photo_caption',
-    mediaUrl: '/public/assets/aistudio/IMG_7992_53256945.jpeg',
+    mediaUrl: '/public/assets/aistudio/IMG_8056_475a1672.jpeg',
     mediaType: 'photo',
     buttons: [],
     condition: 'Inmediatamente posterior a la identificación de país',
@@ -160,72 +160,105 @@ Ningún análisis de rondas anteriores permite conocer con seguridad dónde esta
     stageTag: 'Educativo',
   },
   {
-    id: 'msg-08-testimonios',
-    stepId: 'TESTIMONIOS',
-    internalName: '07. Presentación de Testimonios',
-    text: `También podrás consultar algunas experiencias compartidas por usuarios.
+    id: 'msg-08-planes-iniciales',
+    stepId: 'PLANES_INICIALES',
+    internalName: '08. Opciones Iniciales (Planes)',
+    text: `💎 *ESTAS SON LAS OPCIONES INICIALES*
 
-📌 *Estas imágenes sirven únicamente como referencias de experiencias individuales y no representan resultados garantizados ni ganancias futuras.*`,
-    contentType: 'photo_group',
-    mediaUrl: '/public/assets/aistudio/IMG_7997_ad4caa21.jpeg',
-    mediaType: 'photo',
-    additionalMediaUrls: [
-      '/public/assets/aistudio/IMG_7998_515178b9.jpeg',
-      '/public/assets/aistudio/IMG_7999_3280051c.jpeg',
+He organizado tres alternativas para que conozcas los recursos y beneficios disponibles en cada plan.
+
+🥉 *PLAN 1 — $15.000 COP*
+💰 Premio indicado: $75.000 COP.
+
+🥈 *PLAN 2 — $25.000 COP*
+💰 Premio indicado: $115.000 COP.
+
+🥇 *PLAN 3 — $40.000 COP*
+💰 Premio indicado: $35.000 COP.
+📱 Incluye acceso a la aplicación de apoyo con herramientas de análisis de casillas.
+
+✨ Elige el plan que deseas consultar.
+
+Antes de realizar cualquier pago, podrás conocer exactamente qué incluye cada opción y cuáles son sus condiciones.
+
+Los premios están sujetos a las reglas del juego y no representan ganancias garantizadas.`,
+    contentType: 'text_buttons',
+    buttons: [
+      { id: 'btn-p1', text: '🥉 PLAN 1 — $15.000 COP', type: 'callback', value: 'plan_15000' },
+      { id: 'btn-p2', text: '🥈 PLAN 2 — $25.000 COP', type: 'callback', value: 'plan_25000' },
+      { id: 'btn-p3', text: '🥇 PLAN 3 — $40.000 COP', type: 'callback', value: 'plan_40000' },
     ],
-    buttons: [],
-    condition: 'Posterior a información de Mines (si hay testimonios cargados)',
-    nextStepId: 'INFO_REGISTRO',
+    condition: 'Usuario selecciona país en Etapa 1',
+    nextStepId: 'GUIA_REGISTRO',
     isActive: true,
     order: 8,
-    stageTag: 'Testimonios',
+    stageTag: 'Etapa 1 — Planes',
   },
   {
-    id: 'msg-09-info-registro',
-    stepId: 'INFO_REGISTRO',
-    internalName: '08. Información de Registro en Plataforma',
-    text: `Si después de conocer la información deseas explorar la plataforma, puedes consultar el siguiente enlace oficial:`,
-    contentType: 'text_buttons',
-    buttons: [
-      {
-        id: 'btn-1x-consultar',
-        text: '🎰 CONSULTAR PLATAFORMA 1XBET',
-        type: 'url',
-        value: 'https://1xbet-col.com?bf=632b4337f60c4_15751275401',
-      },
+    id: 'msg-09-guia-registro',
+    stepId: 'GUIA_REGISTRO',
+    internalName: '09. Preparar Registro + Imágenes Oficiales',
+    text: `📝 *¡VAMOS A PREPARAR TU REGISTRO!*
+
+Para continuar, sigue estos pasos:
+
+1. Ingresa al enlace oficial.
+2. Completa los datos solicitados.
+3. Revisa que tu cuenta haya quedado registrada.
+4. Consulta las imágenes de orientación que aparecen a continuación para completar el registro correctamente.
+
+🔗 *ENLACE DE REGISTRO:*
+https://1xbet-col.com?bf=632b4337f60c4_15751275401
+
+📸 *GUÍA VISUAL DE REGISTRO:*`,
+    contentType: 'photo_group',
+    mediaUrl: '/public/assets/aistudio/IMG_8045_386300d5.jpeg',
+    mediaType: 'photo',
+    additionalMediaUrls: [
+      '/public/assets/aistudio/IMG_8046_e22d614e.jpeg',
+      '/public/assets/aistudio/IMG_8047_fd76850d.jpeg',
+      '/public/assets/aistudio/IMG_8048_34b6bffb.jpeg',
+      '/public/assets/aistudio/IMG_8049_347e9a5a.jpeg',
+      '/public/assets/aistudio/IMG_8050_f9c1e958.jpeg',
     ],
-    condition: 'Posterior a testimonios',
-    nextStepId: 'PREGUNTA_REGISTRO',
+    buttons: [
+      { id: 'btn-reg-link', text: '🔗 Abrir enlace de registro', type: 'url', value: 'https://1xbet-col.com?bf=632b4337f60c4_15751275401' },
+      { id: 'btn-reg-done', text: '✅ Ya completé el registro', type: 'callback', value: 'continuar_a_guia_mines' },
+    ],
+    condition: 'Usuario selecciona uno de los 3 planes iniciales',
+    nextStepId: 'GUIA_MINES',
     isActive: true,
     order: 9,
-    stageTag: 'Registro',
+    stageTag: 'Etapa 1 — Registro',
   },
   {
-    id: 'msg-10-pregunta-registro',
-    stepId: 'PREGUNTA_REGISTRO',
-    internalName: '09. Pregunta de Registro',
-    text: `*¿Ya tienes una cuenta creada en la plataforma?*`,
-    contentType: 'text_buttons',
-    buttons: [
-      { id: 'btn-reg-si', text: '✅ SÍ, YA ME REGISTRÉ', type: 'callback', value: 'reg_si' },
-      { id: 'btn-reg-no', text: '⏳ TODAVÍA NO', type: 'callback', value: 'reg_no' },
-      { id: 'btn-reg-ayuda', text: '❓ NECESITO AYUDA', type: 'callback', value: 'reg_ayuda' },
-    ],
-    condition: 'Acompaña el enlace de registro',
-    nextStepId: 'SOLICITUD_ID',
+    id: 'msg-10-aviso-deposito',
+    stepId: 'AVISO_DEPOSITO',
+    internalName: '10. Solicitud de Comprobante de Depósito',
+    text: `💳 *¡ENVÍANOS TU COMPROBANTE!*
+
+Por favor, envíame la fotografía o captura del comprobante de tu depósito en este mismo chat.
+
+🔍 Nuestro equipo verificará manualmente tu pago desde el panel de administración.
+
+⏳ Tu solicitud quedará pendiente de verificación.
+
+IMPORTANTE: El envío del comprobante no significa que el depósito esté aprobado.`,
+    contentType: 'text',
+    buttons: [],
+    condition: 'Usuario escribe "Ya deposité", "Listo", "Ya pagué" o pulsa botón de depósito',
+    nextStepId: 'RECEPCION_COMPROBANTE',
     isActive: true,
     order: 10,
-    stageTag: 'Registro',
+    stageTag: 'Etapa 2 — Comprobante',
   },
   {
     id: 'msg-11-solicitud-id',
     stepId: 'SOLICITUD_ID',
-    internalName: '10. Solicitud del ID de Cuenta',
+    internalName: '11. Solicitud del ID de Cuenta',
     text: `¡Perfecto! Para identificar tu cuenta dentro de nuestro proceso de seguimiento, puedes compartir tu ID numérico de cuenta.
 
 🔒 *No envíes contraseñas, códigos de acceso, datos bancarios ni documentos personales.*
-
-Tu ID de cuenta no constituye por sí solo una verificación oficial de tu identidad o de tu registro.
 
 👉 _Escribe únicamente el número de tu ID a continuación (ej. 1603722093):_`,
     contentType: 'text_buttons',
@@ -238,15 +271,15 @@ Tu ID de cuenta no constituye por sí solo una verificación oficial de tu ident
       },
     ],
     condition: 'Usuario indica que ya se registró',
-    nextStepId: 'RECEPCION_ID',
+    nextStepId: 'COMO_ENCONTRAR_ID',
     isActive: true,
     order: 11,
-    stageTag: 'Identificación',
+    stageTag: 'Etapa 1 — Identificación',
   },
   {
     id: 'msg-12-como-encontrar-id',
     stepId: 'COMO_ENCONTRAR_ID',
-    internalName: '11. Guía Visual: Dónde Encontrar el ID (3 Fotos)',
+    internalName: '12. Guía Visual: Dónde Encontrar el ID (3 Fotos)',
     text: `No te preocupes. Te voy a mostrar dónde puedes encontrar el identificador de tu cuenta.
 
 Sigue las imágenes paso a paso:
@@ -269,89 +302,197 @@ Sigue las imágenes paso a paso:
     nextStepId: 'SOLICITUD_ID',
     isActive: true,
     order: 12,
-    stageTag: 'Instrucciones ID',
+    stageTag: 'Etapa 1 — Instrucciones ID',
   },
   {
-    id: 'msg-13-recepcion-id',
-    stepId: 'RECEPCION_ID',
-    internalName: '12. Confirmación de Recepción de ID',
-    text: `¡Gracias! Hemos recibido el identificador que compartiste.
+    id: 'msg-13-confirmacion-pago',
+    stepId: 'CONFIRMACION_PAGO',
+    internalName: '13. Confirmación de Depósito Aprobado',
+    text: `🎮 *¡VERIFICACIÓN COMPLETADA!*
 
-Tu información ha quedado registrada para el seguimiento correspondiente.
+Tu comprobante ha sido revisado y aprobado por nuestro equipo.
 
-📌 *Nota:* El registro queda en estado PENDIENTE DE REVISIÓN y no constituye verificación bancaria o legal.`,
+Ahora puedes acceder al material de orientación y conocer la dinámica del juego.
+
+💎 A continuación encontrarás cinco rondas de ejemplo para familiarizarte con el funcionamiento de las casillas.`,
     contentType: 'text',
     buttons: [],
-    condition: 'Usuario envía ID numérico válido (6 a 12 dígitos)',
-    nextStepId: 'TUTORIAL_MINES',
+    condition: 'Administrador pulsa «✅ APROBAR DEPÓSITO» en el panel',
+    nextStepId: 'RONDAS_ORIENTACION',
     isActive: true,
     order: 13,
-    stageTag: 'Confirmación',
+    stageTag: 'Etapa 2 — Verificación',
   },
   {
-    id: 'msg-14-tutorial-mines',
-    stepId: 'TUTORIAL_MINES',
-    internalName: '13. Tutorial de Mines y Probabilidades',
-    text: `Ahora puedes consultar el tutorial de Mines.
+    id: 'msg-14-rondas-orientacion',
+    stepId: 'RONDAS_ORIENTACION',
+    internalName: '14. Cinco Rondas de Orientación (Ilustrativas)',
+    text: `🎮 *SEÑALES DE ORIENTACIÓN*
 
-Aquí aprenderás:
-• Cómo funciona el tablero 5×5.
-• Cómo se seleccionan las casillas.
-• Qué significa la cantidad de minas.
-• Cómo funcionan los multiplicadores.
-• Cómo interpretar las probabilidades.
-• Por qué no se pueden predecir las casillas ocultas.`,
-    contentType: 'video_caption',
-    mediaUrl: '/public/assets/aistudio/-3957212693191860326_7726be1b.mp4',
-    mediaType: 'video',
+💎 *RONDA 1*
+Trampas: 2 💣
+Aperturas de ejemplo: 1 💎
+🟫🟫🟫🟫🟫
+🟫🟫🟫🟫🟫
+🟫🟫💎🟫🟫
+🟫🟫🟫🟫🟫
+🟫🟫🟫🟫🟫
+
+💎 *RONDA 2*
+Trampas: 2 💣
+Aperturas de ejemplo: 2 💎
+🟫🟫🟫🟫🟫
+🟫💎🟫🟫🟫
+🟫🟫🟫🟫🟫
+🟫🟫🟫💎🟫
+🟫🟫🟫🟫🟫
+
+👀 *INSTRUCCIONES*
+Estas rondas son ejemplos ilustrativos para que te familiarices con la dinámica del tablero. Este material es orientativo y no garantiza resultados futuros ni representa casillas seguras verificadas.`,
+    contentType: 'text',
     buttons: [],
-    condition: 'Posterior a recepción de ID',
-    nextStepId: 'FINALIZACION',
+    condition: 'Enviado automáticamente después de aprobar el comprobante',
+    nextStepId: 'VIDEO_MINES',
     isActive: true,
     order: 14,
-    stageTag: 'Tutorial',
+    stageTag: 'Etapa 2 — Orientación',
   },
   {
-    id: 'msg-15-finalizacion',
-    stepId: 'FINALIZACION',
-    internalName: '14. Mensaje Final de Recorrido',
-    text: `¡Gracias por conocer Juan Carlos | Mines AI! 💎
+    id: 'msg-15-video-mines',
+    stepId: 'VIDEO_MINES',
+    internalName: '15. Video Explicativo + Práctica Etapa 2',
+    text: `🎮 *Cómo encontrar y acceder al juego Mines dentro de la plataforma:*
 
-Esperamos que la información te haya resultado útil.
+1️⃣ Entra al menú principal y pulsa *Casino*.
+2️⃣ Pulsa el botón de *búsqueda* (lupa) y escribe *Mines*.
+3️⃣ Pulsa *Más* y desliza hasta encontrar el juego Mines mostrado en el video.
+4️⃣ Selecciónalo y ya podrás ingresar al tablero para practicar.
 
-Recuerda que Mines es un juego de azar. No existen métodos que garanticen ganancias ni predicciones seguras.
-
-Si necesitas consultar nuevamente los tutoriales, puedes utilizar las opciones de información disponibles en este bot.
-
-¡Bienvenido!`,
-    contentType: 'text',
+Revisa este video paso a paso con atención. Recuerda que cada ronda es aleatoria e independiente y ninguna herramienta predice resultados.`,
+    contentType: 'video_caption',
+    mediaUrl: '/public/assets/aistudio/como_encontrar_mines.mp4',
+    mediaType: 'video',
     buttons: [
-      {
-        id: 'btn-final-platform',
-        text: '🎰 Acceder a 1xBet Mines',
-        type: 'url',
-        value: 'https://1xbet-col.com?bf=632b4337f60c4_15751275401',
-      },
+      { id: 'btn-prac-done', text: '✅ YA TERMINÉ LA PRÁCTICA', type: 'callback', value: 'practica_terminada' },
+      { id: 'btn-prac-help', text: '❓ NECESITO AYUDA', type: 'callback', value: 'practica_ayuda' },
     ],
-    condition: 'Fin del recorrido guiado automático',
-    nextStepId: 'END',
+    condition: 'Enviado automáticamente tras aprobar el comprobante',
+    nextStepId: 'PLANES_AVANZADOS',
     isActive: true,
     order: 15,
-    stageTag: 'Finalización',
+    stageTag: 'Etapa 2 — Tutorial',
   },
 ];
 
 export const INITIAL_MEDIA_ITEMS: MediaItem[] = [
   {
-    id: 'med-paris-presentacion',
-    name: 'IMG_7992_Juan_Carlos_Paris_Presentacion.jpeg',
+    id: 'med-bienvenida-mines',
+    name: 'IMG_8043_Bienvenida_Oficial_Mines.jpeg',
     type: 'photo',
-    url: '/public/assets/aistudio/IMG_7992_53256945.jpeg',
-    description: 'Fotografía oficial de presentación de Juan Carlos en París (Paso 03 - Presentación).',
-    sizeBytes: 890000,
-    dimensions: '1080x1620',
-    createdAt: '2026-11-10T19:00:00Z',
-    associatedStep: 'PRESENTACION',
+    url: '/public/assets/aistudio/IMG_8043_1305f354.jpeg',
+    description: 'Nueva imagen oficial de bienvenida de Mines AI adjunta al mensaje /start.',
+    sizeBytes: 235000,
+    dimensions: '1170x1599',
+    createdAt: '2026-11-13T09:00:00Z',
+    associatedStep: 'BIENVENIDA',
+    stageGroup: 'etapa_1',
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-1',
+    name: 'Registro_Paso_1_Metodo_Email.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8045_386300d5.jpeg',
+    description: 'Guía de Registro - Paso 1: Elegir método de registro "Por e-mail".',
+    sizeBytes: 137000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:01:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 1,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-2',
+    name: 'Registro_Paso_2_Datos_Basicos.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8046_e22d614e.jpeg',
+    description: 'Guía de Registro - Paso 2: Rellenar Nombre, Apellidos y E-mail.',
+    sizeBytes: 121000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:02:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 2,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-3',
+    name: 'Registro_Paso_3_Pais_Telefono.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8047_fd76850d.jpeg',
+    description: 'Guía de Registro - Paso 3: Seleccionar país, región, ciudad y teléfono.',
+    sizeBytes: 106000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:03:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 3,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-4',
+    name: 'Registro_Paso_4_Moneda_Password.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8048_34b6bffb.jpeg',
+    description: 'Guía de Registro - Paso 4: Seleccionar moneda, contraseña y tipo de cuenta.',
+    sizeBytes: 154000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:04:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 4,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-5',
+    name: 'Registro_Paso_5_Casino_1xGames.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8049_347e9a5a.jpeg',
+    description: 'Guía de Registro - Paso 5: Seleccionar bono Casino + 1xGames y Guardar.',
+    sizeBytes: 138000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:05:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 5,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-reg-paso-6',
+    name: 'Registro_Paso_6_Completar_Registro.jpeg',
+    type: 'photo',
+    url: '/public/assets/aistudio/IMG_8050_f9c1e958.jpeg',
+    description: 'Guía de Registro - Paso 6: Verificar datos y pulsar Registrarse.',
+    sizeBytes: 110000,
+    dimensions: '590x1280',
+    createdAt: '2026-11-13T09:06:00Z',
+    associatedStep: 'GUIA_REGISTRO',
+    stageGroup: 'etapa_1',
+    orderIndex: 6,
+    isRealAsset: true,
+  },
+  {
+    id: 'med-video-como-encontrar-mines',
+    name: 'Como_Encontrar_El_Juego_Mines_Post_Deposito.mp4',
+    type: 'video',
+    url: '/public/assets/aistudio/como_encontrar_mines.mp4',
+    description: 'Video explicativo paso a paso sobre cómo encontrar y acceder a Mines (enviado tras depósito verificado).',
+    sizeBytes: 2438660,
+    durationSeconds: 23,
+    createdAt: '2026-11-13T09:10:00Z',
+    associatedStep: 'VIDEO_MINES',
+    stageGroup: 'etapa_2',
     isRealAsset: true,
   },
   {
@@ -359,11 +500,12 @@ export const INITIAL_MEDIA_ITEMS: MediaItem[] = [
     name: 'Video_Demostrativo_Mines_Laptop_Mobile.mp4',
     type: 'video',
     url: '/public/assets/aistudio/-3957212693191860326_7726be1b.mp4',
-    description: 'Vídeo oficial mostrando la app y el tablero 5x5 de Mines en laptop y celular.',
+    description: 'Vídeo demostración mostrando la app y el tablero 5x5 de Mines en laptop y celular.',
     sizeBytes: 5200000,
     durationSeconds: 8,
     createdAt: '2026-11-10T19:05:00Z',
     associatedStep: 'INFO_MINES',
+    stageGroup: 'etapa_2',
     isRealAsset: true,
   },
   {

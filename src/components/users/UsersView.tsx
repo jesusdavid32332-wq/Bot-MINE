@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TelegramUser, UserConversation } from '../../types';
 import { safeText } from '../../utils/safeText';
-import { Modal } from '../ui/Modal';
+import { DataService } from '../../services/dataService';
 import {
   Users,
   Search,
@@ -14,61 +14,116 @@ import {
   ArrowRight,
   ExternalLink,
   Lock,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  CreditCard,
+  History,
 } from 'lucide-react';
 
 interface UsersViewProps {
   users: TelegramUser[];
   conversations: Record<string, UserConversation>;
   onSelectUserForChat?: (user: TelegramUser) => void;
+  onRefreshUsers?: () => void;
 }
 
 export const UsersView: React.FC<UsersViewProps> = ({
   users,
   conversations,
   onSelectUserForChat,
+  onRefreshUsers,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<string>('all');
   const [selectedStage, setSelectedStage] = useState<string>('all');
   const [inspectingUser, setInspectingUser] = useState<TelegramUser | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Filter
   const filteredUsers = users.filter((u) => {
     const matchesSearch =
-      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.name && u.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (u.username && u.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (u.accountId && u.accountId.includes(searchQuery)) ||
       u.telegramId.includes(searchQuery);
-    const matchesCountry = selectedCountry === 'all' || u.country === selectedCountry;
+    const matchesCountry = selectedCountry === 'all' || u.country === selectedCountry || u.declaredCountry === selectedCountry;
     const matchesStage = selectedStage === 'all' || u.stage === selectedStage;
     return matchesSearch && matchesCountry && matchesStage;
   });
 
-  const uniqueCountries = Array.from(new Set(users.map((u) => u.country)));
-  const uniqueStages = Array.from(new Set(users.map((u) => u.stage)));
+  const uniqueCountries = Array.from(new Set(users.map((u) => u.country || u.declaredCountry).filter(Boolean)));
+  const uniqueStages = Array.from(new Set(users.map((u) => u.stage).filter(Boolean)));
+
+  const handleVerifyId = async (user: TelegramUser) => {
+    setIsProcessing(true);
+    setNotice(null);
+    try {
+      const res = await DataService.verifyUserId(user.telegramId, 'Juan Carlos');
+      if (res.success && res.user) {
+        setNotice(`✅ ID de ${user.name} verificado. Etapa 2 iniciada.`);
+        setInspectingUser(res.user);
+        if (onRefreshUsers) onRefreshUsers();
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleVerifyPayment = async (user: TelegramUser) => {
+    setIsProcessing(true);
+    setNotice(null);
+    try {
+      const res = await DataService.verifyUserPayment(user.telegramId, 'Juan Carlos');
+      if (res.success && res.user) {
+        setNotice(`💰 Depósito verificado para ${user.name}. Contenido Mines enviado.`);
+        setInspectingUser(res.user);
+        if (onRefreshUsers) onRefreshUsers();
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const getStageBadgeColor = (stage?: string) => {
+    if (!stage) return 'bg-slate-800 text-slate-300';
+    if (stage.startsWith('stage_1')) return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+    if (stage.startsWith('stage_2')) return 'bg-sky-500/15 text-sky-300 border-sky-500/30';
+    if (stage.startsWith('stage_3')) return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+    return 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+  };
 
   return (
     <div className="space-y-6">
       {/* Top Banner Notice */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-[#070d1c] via-[#091329] to-[#070d1c] border border-amber-500/25 shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="p-5 rounded-2xl bg-gradient-to-r from-[#070d1c] via-[#09152e] to-[#070d1c] border border-amber-500/25 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-white tracking-tight">
-              Directorio de Usuarios de Telegram
+            <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+              <Users className="w-5 h-5 text-amber-400" />
+              Directorio de Usuarios Reales de Telegram
             </h2>
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-              CLOUD FIRESTORE EN VIVO
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              AUDITORÍA FIRESTORE
             </span>
           </div>
-          <p className="text-xs text-slate-300 mt-0.5">
-            Registro de usuarios reales, país declarado, progreso del recorrido determinista y ID de cuenta.
+          <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+            Control de usuarios individuales con su estado en las 3 etapas, país seleccionado, plan inicial y avanzado, ID de 1xBet y registro cronológico de transiciones.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800">
-          <Lock className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Privacidad estricta: Sin contraseñas ni datos bancarios (+18)</span>
+        <div className="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/80 px-3.5 py-2 rounded-xl border border-slate-800">
+          <Lock className="w-4 h-4 text-emerald-400" />
+          <span>Privacidad estricta: Estados aislados por usuario</span>
         </div>
       </div>
+
+      {notice && (
+        <div className="p-3.5 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs text-emerald-300">
+          {notice}
+        </div>
+      )}
 
       {/* Filters & Search */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -77,9 +132,9 @@ export const UsersView: React.FC<UsersViewProps> = ({
           <select
             value={selectedCountry}
             onChange={(e) => setSelectedCountry(e.target.value)}
-            className="bg-[#0c1424] border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+            className="bg-[#0c1424] border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
           >
-            <option value="all">Todos los países</option>
+            <option value="all">Todos los países ({uniqueCountries.length})</option>
             {uniqueCountries.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -91,9 +146,9 @@ export const UsersView: React.FC<UsersViewProps> = ({
           <select
             value={selectedStage}
             onChange={(e) => setSelectedStage(e.target.value)}
-            className="bg-[#0c1424] border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+            className="bg-[#0c1424] border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
           >
-            <option value="all">Todas las etapas</option>
+            <option value="all">Todas las etapas ({uniqueStages.length})</option>
             {uniqueStages.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -102,229 +157,273 @@ export const UsersView: React.FC<UsersViewProps> = ({
           </select>
         </div>
 
-        {/* Search Input */}
-        <div className="relative w-full sm:w-72">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por nombre, @username o ID..."
+            placeholder="Buscar por nombre, Telegram ID o ID 1xBet..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#0c1424] border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-sky-500/50"
+            className="w-full bg-[#0c1424] border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
       </div>
 
       {/* Users Table */}
-      <div className="rounded-2xl bg-[#0c1424] border border-slate-800 overflow-hidden">
+      <div className="bg-[#0c1424] border border-slate-800/80 rounded-2xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 text-slate-400 font-semibold bg-[#090f1d]">
-                <th className="py-3 px-4">Usuario</th>
-                <th className="py-3 px-4">ID Telegram</th>
-                <th className="py-3 px-4">País Declarado</th>
-                <th className="py-3 px-4">Etapa del Flujo</th>
-                <th className="py-3 px-4">Interacciones</th>
-                <th className="py-3 px-4">Última Actividad</th>
-                <th className="py-3 px-4">Estado</th>
-                <th className="py-3 px-4 text-right">Ficha</th>
+              <tr className="border-b border-slate-800/80 bg-slate-900/50 text-[11px] font-mono uppercase text-slate-400">
+                <th className="py-3.5 px-4 font-semibold">Usuario</th>
+                <th className="py-3.5 px-4 font-semibold">ID 1xBet</th>
+                <th className="py-3.5 px-4 font-semibold">País</th>
+                <th className="py-3.5 px-4 font-semibold">Plan Inicial</th>
+                <th className="py-3.5 px-4 font-semibold">Etapa de Flujo</th>
+                <th className="py-3.5 px-4 font-semibold">Verificación</th>
+                <th className="py-3.5 px-4 font-semibold">Depósito / Pago</th>
+                <th className="py-3.5 px-4 font-semibold text-right">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {users.length === 0 ? (
+            <tbody className="divide-y divide-slate-800/40 text-xs">
+              {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 px-4 text-center">
-                    <div className="max-w-md mx-auto space-y-3">
-                      <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                        <Users className="w-6 h-6" />
-                      </div>
-                      <h4 className="text-sm font-bold text-white">Todavía no hay usuarios registrados</h4>
-                      <p className="text-xs text-slate-400">
-                        Los usuarios aparecerán aquí automáticamente en tiempo real cuando inicien conversación en Telegram (@JuanCarlosMinesAIBot) o envíen mensajes al webhook en Google Cloud Run.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredUsers.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-8 px-4 text-center text-slate-400 text-xs">
-                    No se encontraron usuarios coincidentes con los filtros seleccionados.
+                  <td colSpan={8} className="text-center py-12 text-slate-500 text-xs">
+                    No hay usuarios registrados en el sistema todavía.
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => (
-                  <tr
-                    key={user.id}
-                    onClick={() => setInspectingUser(user)}
-                    className="hover:bg-slate-800/40 transition-colors cursor-pointer group"
-                  >
-                    <td className="py-3.5 px-4">
-                      <div className="font-bold text-white group-hover:text-amber-300 transition-colors">
-                        {safeText(user.name, 'Usuario Telegram')}
-                      </div>
-                      <div className="text-[11px] font-mono text-slate-400">
-                        {user.username ? `@${safeText(user.username)}` : safeText(user.telegramId)}
-                      </div>
-                    </td>
+                filteredUsers.map((user) => {
+                  const isPending =
+                    user.accountStatus === 'pending_verification' ||
+                    user.accountStatus === 'id_recibido' ||
+                    user.stage === 'stage_1_id_pending';
 
-                    <td className="py-3.5 px-4 font-mono text-slate-300 text-[11px]">
-                      {safeText(user.telegramId)}
-                    </td>
+                  const hasDepositNotice =
+                    user.paymentStatus === 'deposit_notified' ||
+                    user.paymentStatus === 'receipt_pending' ||
+                    user.stage === 'stage_2_payment_pending' ||
+                    user.stage === 'stage_2_awaiting_receipt';
 
-                    <td className="py-3.5 px-4">
-                      <span className="flex items-center gap-1.5 text-slate-200">
-                        <MapPin className="w-3.5 h-3.5 text-sky-400" />
-                        {safeText(user.country, 'No especificado')}
-                      </span>
-                    </td>
+                  return (
+                    <tr
+                      key={user.telegramId}
+                      className="hover:bg-slate-800/30 transition-colors cursor-pointer"
+                      onClick={() => setInspectingUser(user)}
+                    >
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-white">{safeText(user.name)}</div>
+                        <div className="text-[11px] font-mono text-slate-400">
+                          {user.telegramId} · @{user.username || 'sin_alias'}
+                        </div>
+                      </td>
 
-                    <td className="py-3.5 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/20">
-                        {safeText(user.stage || user.currentStep)}
-                      </span>
-                    </td>
+                      <td className="py-3.5 px-4">
+                        {user.accountId ? (
+                          <span className="font-mono text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                            {user.accountId}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 italic">Pendiente</span>
+                        )}
+                      </td>
 
-                    <td className="py-3.5 px-4 font-mono text-slate-300 text-[11px]">
-                      <span>{user.messagesSent || 0} env.</span>
-                      <span className="text-slate-600 mx-1">/</span>
-                      <span>{user.messagesReceived || 0} rec.</span>
-                    </td>
+                      <td className="py-3.5 px-4 text-slate-300">
+                        {safeText(user.country, user.declaredCountry || 'Sin país')}
+                      </td>
 
-                    <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px]">
-                      {safeText(user.lastActivity, 'Reciente')}
-                    </td>
+                      <td className="py-3.5 px-4 text-slate-300 font-medium text-[11px]">
+                        {user.initialPlanLabel || 'Sin plan'}
+                      </td>
 
-                    <td className="py-3.5 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          user.status === 'active'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : user.status === 'waiting_reply'
-                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {user.status === 'active'
-                          ? 'Activo'
-                          : user.status === 'waiting_reply'
-                          ? 'Esperando'
-                          : 'Completado'}
-                      </span>
-                    </td>
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`font-mono text-[10px] font-bold px-2.5 py-0.5 rounded border ${getStageBadgeColor(
+                            user.stage
+                          )}`}
+                        >
+                          {user.flowStateLabel || user.stage || user.currentStep}
+                        </span>
+                      </td>
 
-                    <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInspectingUser(user);
-                        }}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#0f1a30] hover:bg-amber-500 hover:text-black text-slate-200 transition-colors"
-                      >
-                        Ver Perfil
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                      <td className="py-3.5 px-4">
+                        {user.accountStatus === 'verified' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 font-mono">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            VERIFICADO
+                          </span>
+                        ) : isPending ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 font-mono">
+                            <Clock className="w-3.5 h-3.5" />
+                            PENDIENTE
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-400 font-mono">
+                            <XCircle className="w-3.5 h-3.5" />
+                            RECHAZADO
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        {user.paymentStatus === 'payment_verified' ? (
+                          <span className="text-emerald-400 font-mono text-[10px] font-bold">
+                            ✅ PAGO APROBADO
+                          </span>
+                        ) : user.paymentStatus === 'receipt_pending' ? (
+                          <span className="text-amber-300 font-mono text-[10px] font-bold bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                            🟡 COMPROBANTE POR REVISAR
+                          </span>
+                        ) : user.paymentStatus === 'payment_rejected' ? (
+                          <span className="text-red-300 font-mono text-[10px] font-bold bg-red-500/15 px-2 py-0.5 rounded border border-red-500/30">
+                            ❌ DEPÓSITO RECHAZADO
+                          </span>
+                        ) : hasDepositNotice ? (
+                          <span className="text-sky-300 font-mono text-[10px] font-bold bg-sky-500/15 px-2 py-0.5 rounded border border-sky-500/30">
+                            📸 ESPERANDO COMPROBANTE
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 font-mono text-[10px]">Sin aviso</span>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isPending && (
+                            <button
+                              onClick={() => handleVerifyId(user)}
+                              disabled={isProcessing}
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-md shadow-emerald-500/20"
+                            >
+                              Verificar ID
+                            </button>
+                          )}
+
+                          {hasDepositNotice && (
+                            <button
+                              onClick={() => handleVerifyPayment(user)}
+                              disabled={isProcessing}
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-500 hover:bg-sky-400 text-slate-950 shadow-md shadow-sky-500/20"
+                            >
+                              Aprobar Pago
+                            </button>
+                          )}
+
+                          {onSelectUserForChat && (
+                            <button
+                              onClick={() => onSelectUserForChat(user)}
+                              title="Ver chat"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* User Profile Drawer / Modal */}
+      {/* Inspect User Drawer / Modal */}
       {inspectingUser && (
-        <Modal
-          isOpen={true}
-          onClose={() => setInspectingUser(null)}
-          title={`Perfil de Usuario: ${inspectingUser.name}`}
-          subtitle={`ID Telegram: ${inspectingUser.telegramId} · @${inspectingUser.username}`}
-          maxWidth="max-w-3xl"
-        >
-          <div className="space-y-5">
-            {/* Quick Metrics Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">País Voluntario</span>
-                <span className="text-xs font-bold text-white">{inspectingUser.country}</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="w-full max-w-xl bg-[#0c1424] border border-amber-500/30 rounded-2xl shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <span className="text-[10px] font-mono uppercase text-amber-400 tracking-wider font-bold">
+                  Ficha Detallada de Usuario
+                </span>
+                <h3 className="text-base font-bold text-white">{safeText(inspectingUser.name)}</h3>
               </div>
-              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">Etapa de Conversación</span>
-                <span className="text-xs font-bold text-sky-400">{inspectingUser.stage}</span>
+              <button
+                onClick={() => setInspectingUser(null)}
+                className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded bg-slate-800"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
+              <div>
+                <span className="text-slate-400 block text-[10px]">Telegram ID:</span>
+                <span className="font-mono text-white font-bold">{inspectingUser.telegramId}</span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">Experiencia en Mines</span>
-                <span className="text-xs font-bold text-amber-400 capitalize">
-                  {inspectingUser.experienceLevel === 'experimentado' ? 'Sí (Avanzado)' : 'No (Principiante)'}
+              <div>
+                <span className="text-slate-400 block text-[10px]">ID de Cuenta 1xBet:</span>
+                <span className="font-mono text-amber-300 font-bold text-sm">
+                  {inspectingUser.accountId || 'No enviado'}
                 </span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">ID 1xBet</span>
-                <span className="text-xs font-bold text-emerald-400">
-                  {inspectingUser.accountId ? `#${inspectingUser.accountId}` : 'Pendiente'}
+              <div>
+                <span className="text-slate-400 block text-[10px]">País Registrado:</span>
+                <span className="text-white font-semibold">{inspectingUser.country || 'Sin registrar'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Plan Inicial:</span>
+                <span className="text-amber-400 font-semibold">{inspectingUser.initialPlanLabel || 'Ninguno'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Plan Avanzado (Etapa 3):</span>
+                <span className="text-emerald-400 font-semibold">{inspectingUser.advancedPlanLabel || 'Ninguno'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Comisión 10% Aceptada:</span>
+                <span className="font-semibold text-white">
+                  {inspectingUser.termsAccepted ? '✅ Aceptada' : '❌ No aceptada / Pendiente'}
                 </span>
               </div>
             </div>
 
-            {/* Conversation Transcript */}
+            {/* Transition Timeline */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Historial de Conversación con el Bot
-                </h4>
-                {onSelectUserForChat && (
-                  <button
-                    onClick={() => {
-                      onSelectUserForChat(inspectingUser);
-                      setInspectingUser(null);
-                    }}
-                    className="text-xs font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
-                  >
-                    Abrir en chat en vivo
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
+              <span className="text-xs font-bold text-slate-300 block mb-2">
+                Línea de Tiempo de Transiciones (Auditoría):
+              </span>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {inspectingUser.stageTransitions && inspectingUser.stageTransitions.length > 0 ? (
+                  inspectingUser.stageTransitions.map((tr) => (
+                    <div
+                      key={tr.id}
+                      className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-mono font-bold text-amber-300">{tr.fromStage} ➔ {tr.toStage}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {new Date(tr.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {tr.reason || 'Transición registrada'}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Actor: {tr.actor} {tr.adminId ? `· Admin: ${tr.adminId}` : ''}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-slate-500 italic p-3 bg-slate-900 rounded-xl">
+                    Sin transiciones registradas aún.
+                  </div>
                 )}
               </div>
-
-              {conversations[inspectingUser.id]?.messages?.length ? (
-                <div className="p-3 rounded-xl bg-[#090f1d] border border-slate-800 space-y-2.5 max-h-64 overflow-y-auto">
-                  {conversations[inspectingUser.id].messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`p-2.5 rounded-xl text-xs max-w-[85%] ${
-                        m.sender === 'user'
-                          ? 'ml-auto bg-sky-950/60 border border-sky-500/20 text-sky-100'
-                          : (m.sender as string) === 'gemini'
-                          ? 'mr-auto bg-amber-950/40 border border-amber-500/20 text-amber-100'
-                          : 'mr-auto bg-slate-900 border border-slate-800 text-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 text-[10px] opacity-70 mb-1 font-mono">
-                        <span className="font-bold uppercase">
-                          {m.sender === 'user' ? 'Usuario' : (m.sender as string) === 'gemini' ? 'Gemini AI' : 'Bot Juan Carlos'}
-                        </span>
-                        <span>{m.timestamp}</span>
-                      </div>
-                      <p className="whitespace-pre-wrap">{safeText(m.text)}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
-                  Sin mensajes registrados aún para este usuario.
-                </div>
-              )}
             </div>
 
-            {/* Privacy & Responsible Gaming Notice */}
-            <div className="p-3 rounded-xl bg-slate-900/40 border border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>
-                Protección de privacidad: Este panel no almacena contraseñas, medios de pago ni información financiera sensible. Cumple directivas de juego responsable para mayores de 18 años.
-              </span>
+            <div className="flex justify-end pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setInspectingUser(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
-        </Modal>
+        </div>
       )}
     </div>
   );
